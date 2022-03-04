@@ -1,5 +1,5 @@
 env/
-data/*.txt
+data/**/*.txt
 *.zip
 *.tar.gz
 *.swp

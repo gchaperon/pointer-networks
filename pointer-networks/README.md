@@ -27,3 +27,16 @@ data
 └── tsp_5_train.zip
 ```
 
+# Notes on data
+Training splits with data files correspondance
+
+| train split         | file                         |
+|---------------------|------------------------------|
+| `n=5 (optimal)`     | `tsp_5_train.zip/tsp5.txt`   |
+| `n=10 (optimal)`    | `tsp_10_train_exact.txt`     |
+| `n=50 (a1 trained)` | `tsp_50_train.zip/tsp50.txt` |
+| `n=50 (a3 trained)` | `???`                        |
+| `n=5-20 (optimal)`  | `tsp_5-20_train.zip/*`       |
+
+Some files where determined by inspecting the average tour distance. In particular, there are 2 `tsp_10_*` train/test pairs and only one `tsp_50_*` train/test pair.
+
