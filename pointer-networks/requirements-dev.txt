@@ -1,2 +1,7 @@
 gdown
 ipython
+tox==3.24.5
+mypy==0.931
+flake8==4.0.1
+black==22.1.0
+pytest==7.0.1
