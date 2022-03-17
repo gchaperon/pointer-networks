@@ -44,20 +44,20 @@ Some files were determined by inspecting the average tour distance. In particula
 ## Test
 Data files correspondance with Table 2 of the paper
 
-| n                 | optimal                       | a1                              | a2  | a3  |
-|-------------------|-------------------------------|---------------------------------|-----|-----|
-| 5                 | tsp_5_train.zip/tsp5_test.txt | ???                             | ??? | ??? |
-| 10                | tsp_10_test_exact.txt         | tsp_10_train.zip/tsp10_test.txt | ??? | ??? |
-| 50 (a1 trained)   | na                            | tsp_50_test.txt.zip             | ??? | ??? |
-| 50 (a3 trained)   | na                            | same                            | ??? | ??? |
-| 5 (5-20 trained)  | same                          | ???                             | ??? | ??? |
-| 10 (5-20 trained) | same                          | ???                             | ??? | ??? |
-| 20 (5-20 trained) | ???                           | tsp_20_test.txt                 | ??? | ??? |
-| 25 (5-20 trained) | na                            | ???                             | ??? | ??? |
-| 30 (5-20 trained) | na                            | ???                             | ??? | ??? |
-| 40 (5-20 trained) | na                            | tsp_40_test.txt                 | ??? | ??? |
-| 50 (5-20 trained) | na                            | same                            | ??? | ??? |
+| n                 | optimal                         | a1                                | a2    | a3    |
+|-------------------|---------------------------------|-----------------------------------|-------|-------|
+| 5                 | `tsp_5_train.zip/tsp5_test.txt` | `???`                             | `???` | `???` |
+| 10                | `tsp_10_test_exact.txt`         | `tsp_10_train.zip/tsp10_test.txt` | `???` | `???` |
+| 50 (a1 trained)   | `na`                            | `tsp_50_test.txt.zip`             | `???` | `???` |
+| 50 (a3 trained)   | `na`                            | `same`                            | `???` | `???` |
+| 5 (5-20 trained)  | `same`                          | `???`                             | `???` | `???` |
+| 10 (5-20 trained) | `same`                          | `???`                             | `???` | `???` |
+| 20 (5-20 trained) | `???`                           | `tsp_20_test.txt`                 | `???` | `???` |
+| 25 (5-20 trained) | `na`                            | `???`                             | `???` | `???` |
+| 30 (5-20 trained) | `na`                            | `???`                             | `???` | `???` |
+| 40 (5-20 trained) | `na`                            | `tsp_40_test.txt`                 | `???` | `???` |
+| 50 (5-20 trained) | `na`                            | `same`                            | `???` | `???` |
 
-"na" means it shouldn't exist, "???" means it should exist but isn't found in `./data` and "same" means its the same file from a previous row.
+`na` means it shouldn't exist, `???` means it should exist but isn't found in `./data` and `same` means its the same file from a previous row.
 
 Again, some were determined by inspecting the average tour distance.
