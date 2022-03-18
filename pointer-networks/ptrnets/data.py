@@ -11,7 +11,7 @@ import pytorch_lightning as pl
 import contextlib
 
 
-_Point = tp.Tuple[float, float]
+from ptrnets.utils import _Point
 
 
 def parse_line(line: str) -> tp.Tuple[tp.List[_Point], tp.List[int]]:
@@ -21,10 +21,6 @@ def parse_line(line: str) -> tp.Tuple[tp.List[_Point], tp.List[int]]:
     # reveal_type(points)
     indices = list(map(int, indices_str.split()))
     return points, indices
-
-
-def distance(pt1: tp.Tuple[float, float], pt2: tp.Tuple[float, float]) -> float:
-    return math.sqrt((pt2[0] - pt1[0]) ** 2 + (pt2[1] - pt1[1]) ** 2)
 
 
 def tour_distance(pts: tp.List[_Point], seq: tp.List[int]) -> float:
@@ -87,7 +83,7 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
         (5, "train", "optimal"): ("tsp_5_train.zip", "tsp5.txt"),
         (5, "test", "optimal"): ("tsp_5_train.zip", "tsp5_test.txt"),
         (10, "train", "optimal"): ("tsp_10_train_exact.txt",),
-        (10, "test", "optimal"): ("tsp_10_train_exact.txt",),
+        (10, "test", "optimal"): ("tsp_10_test_exact.txt",),
         (10, "test", "a1"): ("tsp_10_train.zip", "tsp10_test.txt"),
         (20, "test", "a1"): ("tsp_20_test.txt",),
         (40, "test", "a1"): ("tsp_40_test.txt",),
@@ -107,11 +103,15 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
     ) -> None:
         super().__init__()
 
+        self.nexamples = nexamples
+        self.split = split
+        self.algorithm = algorithm
+
         open_args = self._options_to_file.get((nexamples, split, algorithm))
         if open_args is None:
             raise ValueError(
                 "Invalid option combination. "
-                'Check the paper and "Notes on data" in thetuple readme.'
+                'Check the paper and "Notes on data" in the readme.'
             )
 
         fname, *rest = open_args
@@ -128,7 +128,7 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
         # prepend target_point_sequence with bos token (=> in the paper)
         # i will arbitrarily define that token to be [-1, -1]
         target_point_sequence = torch.vstack(
-            (torch.ones(2) * -1, points[idx_sequence - 1])
+            [torch.ones(2) * -1, points[idx_sequence - 1]]
         )
         # append 0 to idx_sequence to simulate eos token
         return (
@@ -148,7 +148,7 @@ _Batch = tp.Tuple[
 ]
 
 
-def collate_items(items: tp.Sequence[_PtrNetItem]) -> _Batch:
+def collate_into_packed_sequence(items: tp.Sequence[_PtrNetItem]) -> _Batch:
     point_sets: tp.List[torch.Tensor] = []
     target_point_sequences: tp.List[torch.Tensor] = []
     answers: tp.List[torch.Tensor] = []
@@ -158,6 +158,10 @@ def collate_items(items: tp.Sequence[_PtrNetItem]) -> _Batch:
         answers.append(answer)
     pack = functools.partial(torch.nn.utils.rnn.pack_sequence, enforce_sorted=False)
     return pack(point_sets), pack(target_point_sequences), pack(answers)
+
+
+def collate_into_tensor(items: tp.Sequence[_PtrNetItem]):
+    return tuple(torch.stack(tensors, dim=1) for tensors in zip(*items))
 
 
 class TSPDataModule(pl.LightningDataModule):
@@ -199,7 +203,11 @@ class TSPDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=os.cpu_count() or 0,
-            collate_fn=collate_items,
+            collate_fn=(
+                collate_into_packed_sequence
+                if self.tsp_train.nexamples == "5-20"
+                else collate_into_tensor
+            ),
             pin_memory=True,
         )
 
@@ -210,7 +218,11 @@ class TSPDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=os.cpu_count() or 0,
-            collate_fn=collate_items,
+            collate_fn=(
+                collate_into_packed_sequence
+                if self.tsp_test.nexamples == "5-20"
+                else collate_into_tensor
+            ),
             pin_memory=True,
         )
 
