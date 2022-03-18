@@ -13,9 +13,8 @@ import ptrnets.utils as utils
 class Attention(nn.Module):
     def __init__(self, input_size: int) -> None:
         super().__init__()
-        # TODO: initialize weights properly
         # Naming convention follows the paper
-        self.tanh = nn.Tanh()
+        self.activation = nn.Tanh()
         self.softmax = nn.Softmax(dim=1)
         self.W1 = nn.Parameter(torch.empty(input_size, input_size))
         self.W2 = nn.Parameter(torch.empty(input_size, input_size))
@@ -35,7 +34,7 @@ class Attention(nn.Module):
         # decoder_output: (dec_seq_len, batch, hidden)
         # scores: (dec_seq_len, enc_sec_len, batch)
         scores = (
-            self.tanh(
+            self.activation(
                 encoder_output @ self.W1 + (decoder_output @ self.W2).unsqueeze(1)
             )
             @ self.v
@@ -59,7 +58,9 @@ class Attention(nn.Module):
             decoder_output
         )
         # shape: (max_dec_seq_len, max_enc_sec_len, batch)
-        scores = self.tanh(decoder_unpacked.unsqueeze(1) + encoder_unpacked) @ self.v
+        scores = (
+            self.activation(decoder_unpacked.unsqueeze(1) + encoder_unpacked) @ self.v
+        )
         # mask padded values with -inf so they cannot be attended to
         scores[
             :,
@@ -70,7 +71,6 @@ class Attention(nn.Module):
         ] = float("-inf")
         # shape: (max_dec_seq_len, max_enc_sec_len, batch)
         attention_coefs = self.softmax(scores)
-        # breakpoint()
         return nn.utils.rnn.pack_padded_sequence(
             attention_coefs.transpose(1, 2), lengths=decoder_lens, enforce_sorted=False
         )
@@ -170,7 +170,6 @@ class PointerNetwork(pl.LightningModule):
     def training_step(self, batch: ptrnets.data._Batch, batch_idx: int) -> torch.Tensor:
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
-        # breakpoint()
         loss = self._get_loss(prediction, target)
         self.log("train_loss", loss)
         self.log("train_token_acc", utils.token_accuracy(prediction, target))
@@ -209,12 +208,6 @@ class PointerNetwork(pl.LightningModule):
             "validation_sequence_acc",
             utils.sequence_accuracy(all_predictions, all_targets),
         )
-        # use [:-1] to ignore the last index pointing to EOS token
-        self.log(
-            "validation_avg_dist_diff",
-            utils.tour_distance(all_point_sets, all_predictions.argmax(2)[:-1]).mean()
-            - utils.tour_distance(all_point_sets, all_targets[:-1]).mean(),
-        )
 
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=self.learn_rate)
@@ -240,7 +233,6 @@ class PointerNetworkForTSP(PointerNetwork):
             _, (h_n, c_n) = self.decoder(decoder_input.view(1, 1, -1), (h_n, c_n))
             attention_scores = self.attention(encoder_output, h_n)
             index = attention_scores.argmax(dim=2).item()
-            breakpoint()
             if index == 0:
                 break
             indices.append(index)

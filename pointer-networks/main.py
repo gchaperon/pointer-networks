@@ -12,29 +12,29 @@ def main(args=None) -> None:
         datadir="data",
         train_params=(5, "optimal"),
         test_params=(5, "optimal"),
-        batch_size=128,
+        batch_size=args.batch_size,
     )
-    dm.setup()
-    #    for _ in tqdm.tqdm(dm.train_dataloader()):
-    #        pass
     model = ptrnets.PointerNetwork(
         input_size=2,
-        hidden_size=512,
-        # learn_rate=args.learn_rate,
-        learn_rate=0.001,
-        init_range=(-0.08, 0.08),
+        hidden_size=args.hidden_size,
+        learn_rate=args.learn_rate,
+        # learn_rate=0.001,
+        init_range=args.init_range,
     )
-    breakpoint()
-    trainer = pl.Trainer(gpus=-1, gradient_clip_val=2.0)
+    trainer = pl.Trainer(gpus=-1, gradient_clip_val=args.max_grad_norm)
     trainer.fit(
         model,
         dm,
-        # ckpt_path="lightning_logs/version_15/checkpoints/epoch=7-step=62503.ckpt",
     )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    # parser.add_argument("--learn-rate", required=True, type=float)
+    parser.add_argument("--learn-rate", default=0.001, type=float)
+    parser.add_argument("--hidden_size", default=512, type=int)
+    parser.add_argument("--init-range", nargs=2, default=(-0.08, 0.08), type=float)
+    parser.add_argument("--batch-size", default=128, type=int)
+    parser.add_argument("--max-grad-norm", default=2.0, type=float)
+
     args = parser.parse_args()
     main(args)

@@ -61,3 +61,8 @@ Data files correspondance with Table 2 of the paper
 `na` means it shouldn't exist, `???` means it should exist but isn't found in `./data` and `same` means its the same file from a previous row.
 
 Again, some were determined by inspecting the average tour distance.
+
+# Changes
+Here is the list of changes I did to the original paper description
+
+* Optimizer: SGD to Adam. I obtained similar results with both but Adam converged faster.
