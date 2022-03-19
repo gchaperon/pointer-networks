@@ -14,17 +14,19 @@ You can download it like so
 $ wget -qO- https://users.dcc.uchile.cl/~gchapero/datasets/ptr-nets-data.tar.gz | tar -C data -xzv
 ```
 
-In any case, the data dir should look like this
+In any case, the data dir should end up looking like this
 ```
 data
 ├── convex_hull_10_test.txt
 ├── convex_hull_200_test.txt
-├── convex_hull_500_test.txt.zip
-├── convex_hull_50_test.txt
-├── convex_hull_50_train.txt
-├── convex_hull_5-50_train.txt.zip
+├── ...
+├── convex_hull_5_test.txt
+├── README.txt
+├── tsp_10_test_exact.txt
+├── tsp_10_train_exact.txt
 ├── ...
 └── tsp_5_train.zip
+
 ```
 
 # Notes on data
