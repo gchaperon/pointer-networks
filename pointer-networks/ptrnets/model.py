@@ -15,7 +15,6 @@ class Attention(nn.Module):
         super().__init__()
         # Naming convention follows the paper
         self.activation = nn.Tanh()
-        self.softmax = nn.Softmax(dim=1)
         self.W1 = nn.Parameter(torch.empty(input_size, input_size))
         self.W2 = nn.Parameter(torch.empty(input_size, input_size))
         self.v = nn.Parameter(torch.empty(input_size))
@@ -39,7 +38,7 @@ class Attention(nn.Module):
             )
             @ self.v
         )
-        return self.softmax(scores).transpose(1, 2)
+        return scores.transpose(1, 2)
 
     @forward.register
     def _(
@@ -69,10 +68,8 @@ class Attention(nn.Module):
                 scores.shape[1] - encoder_lens
             ),
         ] = float("-inf")
-        # shape: (max_dec_seq_len, max_enc_sec_len, batch)
-        attention_coefs = self.softmax(scores)
         return nn.utils.rnn.pack_padded_sequence(
-            attention_coefs.transpose(1, 2), lengths=decoder_lens, enforce_sorted=False
+            scores.transpose(1, 2), lengths=decoder_lens, enforce_sorted=False
         )
 
 

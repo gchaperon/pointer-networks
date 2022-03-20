@@ -18,14 +18,13 @@ def main(args=None) -> None:
         input_size=2,
         hidden_size=args.hidden_size,
         learn_rate=args.learn_rate,
-        # learn_rate=0.001,
         init_range=args.init_range,
     )
-    trainer = pl.Trainer(gpus=-1, gradient_clip_val=args.max_grad_norm)
-    trainer.fit(
-        model,
-        dm,
+    trainer = pl.Trainer(
+        gpus=-1,
+        gradient_clip_val=args.max_grad_norm,
     )
+    trainer.fit(model, dm)
 
 
 if __name__ == "__main__":
