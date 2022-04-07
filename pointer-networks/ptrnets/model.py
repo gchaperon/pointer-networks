@@ -5,6 +5,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import ptrnets
 import functools
+import operator
 import typing as tp
 
 import ptrnets.utils as utils
@@ -60,14 +61,6 @@ class Attention(nn.Module):
         scores = (
             self.activation(decoder_unpacked.unsqueeze(1) + encoder_unpacked) @ self.v
         )
-        # mask padded values with -inf so they cannot be attended to
-        scores[
-            :,
-            torch.cat([torch.arange(l, scores.shape[1]) for l in encoder_lens]),
-            torch.arange(scores.shape[2]).repeat_interleave(
-                scores.shape[1] - encoder_lens
-            ),
-        ] = float("-inf")
         return nn.utils.rnn.pack_padded_sequence(
             scores.transpose(1, 2), lengths=decoder_lens, enforce_sorted=False
         )
@@ -216,23 +209,57 @@ class PointerNetworkForTSP(PointerNetwork):
     twice in the response. Uses beam search plus these contraints"""
 
     @torch.no_grad()
-    def decode(self, input: torch.Tensor):
+    def decode(self, input: torch.Tensor, k=3):
         """This is super slow, maybe in the future (maybe) i will try to make
         it faster"""
         assert input.ndim == 2, "input should be a 2 dim tensor, a sequence of points"
 
-        encoder_output, (h_n, c_n) = self.encoder(input.unsqueeze(1))
-        encoder_output = self._prepend_bos_token(encoder_output)
+        # encoder_output, (h_n, c_n) = self.encoder(input.unsqueeze(1))
+        # encoder_output = self._prepend_bos_token(encoder_output)
 
-        decoder_input = torch.ones(2) * -1
-        indices = []
+        # decoder_input = torch.ones(2) * -1
+        # indices = []
+        # while True:
+        #     _, (h_n, c_n) = self.decoder(decoder_input.view(1, 1, -1), (h_n, c_n))
+        #     attention_scores = self.attention(encoder_output, h_n)
+        #     index = attention_scores.argmax(dim=2).item()
+        #     if index == 0:
+        #         break
+        #     indices.append(index)
+        #     decoder_input = input[index - 1]
+
+        encoder_output, last_hidden = self.encoder(input.unsqueeze(1))
+        encoder_output = _prepend_bos_token(encoder_output)
+        beams = [[[], torch.ones(2) * -1, last_hidden, 0.0]]
         while True:
-            _, (h_n, c_n) = self.decoder(decoder_input.view(1, 1, -1), (h_n, c_n))
-            attention_scores = self.attention(encoder_output, h_n)
-            index = attention_scores.argmax(dim=2).item()
-            if index == 0:
+            candidates = []
+            for beam in beams:
+                old_indices, decoder_input, last_hidden, total_score = beam
+                if old_indices and old_indices[-1] == 0:
+                    continue
+                _, last_hidden = self.decoder(
+                    decoder_input.view(1, 1, -1), last_hidden
+                )
+                # take item [0, 0] to undo .view(1, 1, -1) op, it was only needed
+                # to comply with decoder signature
+                attention_scores = self.attention(encoder_output, last_hidden[0])[0, 0]
+                probs, indices = attention_scores.softmax(dim=0).sort(descending=True)
+                scores = probs.log()
+                for index, score in zip(indices[:k], scores[:k]):
+                    candidates.append(
+                        (
+                            [*old_indices, index.item()],
+                            input[index - 1],
+                            last_hidden,
+                            total_score - score.item(),
+                        )
+                    )
+            best = sorted(candidates, key=operator.itemgetter(3))[:k]
+            beams = best
+            if all(indices[-1] == 0 for indices, *_ in beams):
                 break
-            indices.append(index)
-            decoder_input = input[index - 1]
 
-        return indices
+
+        breakpoint()
+        return beams
+
