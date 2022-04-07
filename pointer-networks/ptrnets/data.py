@@ -36,7 +36,7 @@ def tour_distance(pts: tp.List[_Point], seq: tp.List[int]) -> float:
 def _open(
     path: pathlib.Path, inner_path: tp.Optional[str] = None
 ) -> tp.Generator[tp.Iterator[str], None, None]:
-    """I think there are 4 cases
+    """I think there are 4 cases, path might be
     * a .txt file
     * a .zip file with a single .txt inside
     * a .zip file with a bunch of .txt that should be concatenated
