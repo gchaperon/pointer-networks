@@ -58,7 +58,7 @@ def _open(
         raise ValueError(f"Invalid {path=}")
 
 
-_NExamples = tp.Literal[5, 10, 20, 40, 50, "5-20"]
+_NExamples = tp.Literal["5", "10", "20", "40", "50", "5-20"]
 _Split = tp.Literal["train", "test"]
 _Algorithm = tp.Literal["optimal", "a1", "a2", "a3"]
 
@@ -72,15 +72,15 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
             tp.Tuple[str, ...],
         ]
     ] = {
-        (5, "train", "optimal"): ("tsp_5_train.zip", "tsp5.txt"),
-        (5, "test", "optimal"): ("tsp_5_train.zip", "tsp5_test.txt"),
-        (10, "train", "optimal"): ("tsp_10_train_exact.txt",),
-        (10, "test", "optimal"): ("tsp_10_test_exact.txt",),
-        (10, "test", "a1"): ("tsp_10_train.zip", "tsp10_test.txt"),
-        (20, "test", "a1"): ("tsp_20_test.txt",),
-        (40, "test", "a1"): ("tsp_40_test.txt",),
-        (50, "train", "a1"): ("tsp_50_train.zip",),
-        (50, "test", "a1"): ("tsp_50_test.txt.zip",),
+        ("5", "train", "optimal"): ("tsp_5_train.zip", "tsp5.txt"),
+        ("5", "test", "optimal"): ("tsp_5_train.zip", "tsp5_test.txt"),
+        ("10", "train", "optimal"): ("tsp_10_train_exact.txt",),
+        ("10", "test", "optimal"): ("tsp_10_test_exact.txt",),
+        ("10", "test", "a1"): ("tsp_10_train.zip", "tsp10_test.txt"),
+        ("20", "test", "a1"): ("tsp_20_test.txt",),
+        ("40", "test", "a1"): ("tsp_40_test.txt",),
+        ("50", "train", "a1"): ("tsp_50_train.zip",),
+        ("50", "test", "a1"): ("tsp_50_test.txt.zip",),
         ("5-20", "train", "optimal"): ("tsp_5-20_train.zip",),
     }
 
