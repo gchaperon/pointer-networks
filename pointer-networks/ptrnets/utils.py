@@ -30,6 +30,10 @@ def _(points: tp.List[_Point], indices: tp.List[int]) -> float:
 
 @tour_distance.register
 def _(points: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
+    """Computes batched tour distance.
+    points should have dims (tour_len, batch, 2)
+    indices should have dims (tour_len + 1, batch)
+    """
     batch_arange = torch.arange(points.shape[1], device=points.device)
     # NOTE: indices are 1-indexed
     curr = points[indices[:-1] - 1, batch_arange]

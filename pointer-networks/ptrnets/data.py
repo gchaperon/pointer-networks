@@ -23,14 +23,6 @@ def parse_line(line: str) -> tp.Tuple[tp.List[_Point], tp.List[int]]:
     return points, indices
 
 
-def tour_distance(pts: tp.List[_Point], seq: tp.List[int]) -> float:
-    dist = 0.0
-    # NOTE: seq indices are 1-indexed
-    for i, j in zip(seq, seq[1:]):
-        dist += distance(pts[i - 1], pts[j - 1])
-    return dist
-
-
 # I am not completely sure about this usage of contextmanager
 @contextlib.contextmanager
 def _open(
@@ -190,7 +182,7 @@ class TSPDataModule(pl.LightningDataModule):
         self.batch_size = batch_size
 
     def setup(self, stage: tp.Optional[str] = None) -> None:
-        if stage in ("fit", "validate", None):
+        if stage in ("fit", "validate", "test", None):
             self.tsp_test = TSP(self.datadir, *self.test_split_params)
         if stage in ("fit", None):
             self.tsp_train = TSP(self.datadir, *self.train_split_params)
@@ -226,40 +218,11 @@ class TSPDataModule(pl.LightningDataModule):
             pin_memory=True,
         )
 
-
-# class ConvexHull(torch.utils.data.Dataset):
-#     """WIP"""
-#
-#     _file_template = "convex_hull_{n_examples}_{split}"
-#     point_sets: tp.List[tp.List[tp.Tuple[float, float]]]
-#     answers: tp.List[tp.List[int]]
-#
-#     def __init__(
-#         self,
-#         datadir: str,
-#         n_examples: tp.Literal[5, 10, 50, "5-50", 200, 500],
-#         split: tp.Literal["train", "test"],
-#     ):
-#         preffix = self._file_template.format(n_examples=n_examples, split=split)
-#         datapath = next(
-#             (p for p in pathlib.Path(datadir).iterdir() if p.name.startswith(preffix)),
-#             None,
-#         )
-#         if not datapath:
-#             raise ValueError(
-#                 f"Combi not found in {datadir=}: {n_examples=} and {split=}"
-#             )
-#
-#         with _open(datapath) as file:
-#             self.point_sets, self.answers = zip(*map(parse_line, file))
-#
-#     def __len__(self) -> int:
-#         return len(self.point_sets)
-#
-#
-# class ConvexHullDataModule(pl.LightningDataModule):
-#     def __init__(
-#         self,
-#         datadir: str = "data",
-#     ):
-#         pass
+    # I am using the same dataloader here because the only thing I want
+    # to do differently at test time is measure different/more expensive
+    # metrics.
+    # At train time, val_dataloader is used to kinda check if
+    # training makes sense, but the early stopping is done based
+    # on train loss. Plus, all data points come from the same distribution
+    # so it's whatever.
+    test_dataloader = val_dataloader

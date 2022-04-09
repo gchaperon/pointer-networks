@@ -70,8 +70,10 @@ Here is the list of changes I did to the original paper description
 * Optimizer: SGD to Adam. I obtained similar results with both but Adam converged faster.
 
 # Other implementations
+* https://github.com/devsisters/pointer-network-tensorflow
 * https://github.com/keon/pointer-networks
 * https://github.com/vshallc/PtrNets
 * https://github.com/Chanlaw/pointer-networks
 * https://github.com/devnag/tensorflow-pointer-networks
+* https://github.com/ast0414/pointer-networks-pytorch
 

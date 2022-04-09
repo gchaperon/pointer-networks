@@ -14,7 +14,7 @@ def main(args=None) -> None:
         test_params=(5, "optimal"),
         batch_size=args.batch_size,
     )
-    model = ptrnets.PointerNetwork(
+    model = ptrnets.PointerNetworkForTSP(
         input_size=2,
         hidden_size=args.hidden_size,
         learn_rate=args.learn_rate,
@@ -23,8 +23,13 @@ def main(args=None) -> None:
     trainer = pl.Trainer(
         gpus=-1,
         gradient_clip_val=args.max_grad_norm,
+        callbacks=[
+            pl.callbacks.EarlyStopping(monitor="train_loss", patience=5),
+            pl.callbacks.ModelCheckpoint(monitor="train_loss"),
+        ],
     )
     trainer.fit(model, dm)
+    trainer.test(model, dm)
 
 
 if __name__ == "__main__":

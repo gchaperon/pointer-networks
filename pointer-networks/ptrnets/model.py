@@ -5,9 +5,10 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import ptrnets
 import functools
+import operator
 import typing as tp
-
 import ptrnets.utils as utils
+import dataclasses
 
 
 class Attention(nn.Module):
@@ -56,18 +57,11 @@ class Attention(nn.Module):
         decoder_unpacked, decoder_lens = nn.utils.rnn.pad_packed_sequence(
             decoder_output
         )
+        # TODO: maybe mask padded positions?
         # shape: (max_dec_seq_len, max_enc_sec_len, batch)
         scores = (
             self.activation(decoder_unpacked.unsqueeze(1) + encoder_unpacked) @ self.v
         )
-        # mask padded values with -inf so they cannot be attended to
-        scores[
-            :,
-            torch.cat([torch.arange(l, scores.shape[1]) for l in encoder_lens]),
-            torch.arange(scores.shape[2]).repeat_interleave(
-                scores.shape[1] - encoder_lens
-            ),
-        ] = float("-inf")
         return nn.utils.rnn.pack_padded_sequence(
             scores.transpose(1, 2), lengths=decoder_lens, enforce_sorted=False
         )
@@ -185,16 +179,16 @@ class PointerNetwork(pl.LightningModule):
 
     def validation_step(
         self, batch: ptrnets.data._Batch, batch_idx: int
-    ) -> tp.Tuple[PackedSequence, PackedSequence]:
+    ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
-        return encoder_input, target, prediction
+        return prediction, target
 
     def validation_epoch_end(
-        self, validation_step_outputs: tp.List[tp.Tuple[PackedSequence, PackedSequence]]
+        self, validation_step_outputs: tp.List[tp.Tuple[torch.Tensor, torch.Tensor]]
     ) -> None:
-        all_point_sets, all_targets, all_predictions = (
-            torch.cat(list_, dim=1) for list_ in zip(*validation_step_outputs)
+        all_predictions, all_targets = (
+            torch.cat(items, dim=1) for items in zip(*validation_step_outputs)
         )
 
         self.log("validation_loss", self._get_loss(all_predictions, all_targets))
@@ -206,8 +200,55 @@ class PointerNetwork(pl.LightningModule):
             utils.sequence_accuracy(all_predictions, all_targets),
         )
 
+    def test_step(
+        self, batch: ptrnets.data._Batch, batch_idx: int
+    ) -> tp.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        encoder_input, decoder_input, target = batch
+        decoded = torch.stack(
+            [
+                torch.tensor(self.decode(points), device=target.device)
+                for points in encoder_input.unbind(1)
+            ],
+        )
+        target = target[:-1]
+        return encoder_input, decoded.T, target
+
+    def test_epoch_end(
+        self,
+        test_step_outputs: tp.List[tp.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+    ) -> None:
+        all_point_sets, all_decoded, all_targets = (
+            torch.cat(items, dim=1) for items in zip(*test_step_outputs)
+        )
+        self.log(
+            "sequence_acc(decodedd)",
+            (all_decoded == all_targets).all(dim=0).sum() / all_decoded.shape[1],
+        )
+        target_avg_tour_distance = torch.mean(
+            utils.tour_distance(all_point_sets, all_targets)
+        )
+        decoded_avg_tour_distance = torch.mean(
+            utils.tour_distance(all_point_sets, all_decoded)
+        )
+        self.log(
+            "avg_tour_distance_diff",
+            decoded_avg_tour_distance - target_avg_tour_distance,
+        )
+
     def configure_optimizers(self) -> torch.optim.Optimizer:
         return torch.optim.Adam(self.parameters(), lr=self.learn_rate)
+
+
+@dataclasses.dataclass
+class _Beam:
+    indices: tp.List[int]
+    score: float
+    decoder_input: torch.Tensor
+    # see nn.LSTM docs for `last_hidden` type
+    last_hidden: tp.Tuple[torch.Tensor, torch.Tensor]
+
+    def is_done(self):
+        return self.indices and self.indices[-1] == 0
 
 
 class PointerNetworkForTSP(PointerNetwork):
@@ -216,23 +257,78 @@ class PointerNetworkForTSP(PointerNetwork):
     twice in the response. Uses beam search plus these contraints"""
 
     @torch.no_grad()
-    def decode(self, input: torch.Tensor):
+    def decode(
+        self, input: torch.Tensor, k: int = 3, nreturn: int = 1, wscores: bool = False
+    ) -> tp.Union[
+        tp.Union[tp.List[int], tp.Tuple[tp.List[int], float]],
+        tp.Union[tp.List[tp.List[int]], tp.List[tp.Tuple[tp.List[int], float]]],
+    ]:
         """This is super slow, maybe in the future (maybe) i will try to make
         it faster"""
         assert input.ndim == 2, "input should be a 2 dim tensor, a sequence of points"
+        nreturn = nreturn or k
+        assert nreturn <= k, (
+            f"how am i supposed to return {nreturn} beams"
+            f"when i am supposed to use only {k} beams!"
+            "\nTHINK MARK, THINK!"
+        )
 
-        encoder_output, (h_n, c_n) = self.encoder(input.unsqueeze(1))
-        encoder_output = self._prepend_bos_token(encoder_output)
+        encoder_output, encoder_last_hidden = self.encoder(input.unsqueeze(1))
+        encoder_output = _prepend_bos_token(encoder_output)
 
-        decoder_input = torch.ones(2) * -1
-        indices = []
-        while True:
-            _, (h_n, c_n) = self.decoder(decoder_input.view(1, 1, -1), (h_n, c_n))
-            attention_scores = self.attention(encoder_output, h_n)
-            index = attention_scores.argmax(dim=2).item()
-            if index == 0:
-                break
-            indices.append(index)
-            decoder_input = input[index - 1]
+        beams: tp.List[_Beam] = [
+            _Beam(
+                indices=[],
+                score=0.0,
+                decoder_input=torch.ones(2, device=encoder_output.device) * -1,
+                last_hidden=encoder_last_hidden,
+            )
+        ]
+        while not all(beam.is_done() for beam in beams):
+            candidates: tp.List[_Beam] = []
+            for beam in beams:
+                # always add finished beams as candidates
+                # this simplifies the code (I think), but should be irrelevant
+                # for the end result
+                if beam.is_done():
+                    candidates.append(beam)
+                    continue
 
-        return indices
+                # finish decoding when all nodes have been visited
+                # go back to node 1 and append 0 to indicate its done
+                if set(beam.indices) == set(range(1, len(input) + 1)):
+                    candidates.append(
+                        dataclasses.replace(beam, indices=beam.indices + [1, 0])
+                    )
+                    continue
+
+                _, (h_n, c_n) = self.decoder(
+                    beam.decoder_input.view(1, 1, -1), beam.last_hidden
+                )
+                # select [0, 0] to undo the .view(1, 1, -1) op and get a vector
+                attention_scores = self.attention(encoder_output, h_n)[0, 0]
+                # mask nodes visited already, plus node "0" which is invalid
+                attention_scores[beam.indices + [0]] = float("-inf")
+                probs, indices = attention_scores.softmax(dim=0).sort(descending=True)
+
+                for prob, index in zip(probs[:k], indices[:k]):
+                    candidates.append(
+                        _Beam(
+                            indices=[*beam.indices, index.item()],
+                            score=beam.score - torch.log(prob).item(),
+                            decoder_input=input[index - 1],
+                            last_hidden=(h_n, c_n),
+                        )
+                    )
+            beams = sorted(candidates, key=operator.attrgetter("score"))[:k]
+
+        if nreturn == 1:
+            if wscores:
+                return beams[0].indices[:-1], beams[0].score
+            else:
+                return beams[0].indices[:-1]
+        else:
+            if wscores:
+                return [(beam.indices[:-1], beam_score) for beam in beams[:nreturn]]
+            else:
+                return [beam.indices[:-1] for beam in beams[:nreturn]]
