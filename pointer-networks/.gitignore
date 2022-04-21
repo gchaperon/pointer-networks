@@ -5,3 +5,5 @@ data/**/*.txt
 *.swp
 lightning_logs/
 __pycache__/
+
+.vimrc
