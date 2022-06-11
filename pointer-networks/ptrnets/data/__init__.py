@@ -20,8 +20,8 @@ _Batch = tp.Tuple[
 
 
 class TSP(torch.utils.data.Dataset[_PtrNetItem]):
-    NPointsT = tp.Literal["5", "10", "20", "40", "50", "5-20"]
-    SplitT = tp.Literal["train", "test"]
+    NPointsT = tp.Literal["5", "10", "20", "40", "50", "5-20", "5-10"]
+    SplitT = tp.Literal["train", "test", "debug"]
     AlgorithmT = tp.Literal["optimal", "a1", "a2", "a3"]
 
     _options_to_file: tp.ClassVar[
@@ -40,6 +40,9 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
         ("50", "train", "a1"): ("tsp_50_train.zip",),
         ("50", "test", "a1"): ("tsp_50_test.txt.zip",),
         ("5-20", "train", "optimal"): ("tsp_5-20_train.zip",),
+        # for debugging
+        ("5-10", "train", "optimal"): ("tsp_5-10_debug.txt",),
+        ("5-10", "test", "optimal"): ("tsp_5-10_debug.txt",),
     }
 
     BOS_TOKEN = np.array([-1.0, -1.0], dtype=np.float32)
@@ -109,13 +112,7 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
 
 
 def collate_into_packed_sequence(items: tp.Sequence[_PtrNetItem]) -> _Batch:
-    point_sets: tp.List[torch.Tensor] = []
-    target_point_sequences: tp.List[torch.Tensor] = []
-    answers: tp.List[torch.Tensor] = []
-    for points, target_point_sequence, answer in items:
-        point_sets.append(points)
-        target_point_sequences.append(target_point_sequence)
-        answers.append(answer)
+    point_sets, target_point_sequences, answers = zip(*items)
     pack = functools.partial(torch.nn.utils.rnn.pack_sequence, enforce_sorted=False)
     return pack(point_sets), pack(target_point_sequences), pack(answers)
 
@@ -200,9 +197,6 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
         ("500", "test"): "convex_hull_500_test.txt.zip",
     }
 
-    BOS_TOKEN = np.array([-1.0, -1.0], dtype=np.float32)
-    EOS_TOKEN = np.array([0])
-
     point_sets: tp.List[npt.NDArray[np.float32]]
     targets: tp.List[npt.NDArray[np.int64]]
 
@@ -243,12 +237,7 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
     def __getitem__(self, key: int) -> _PtrNetItem:
         points = torch.from_numpy(self.point_sets[key])
         idx_sequence = torch.from_numpy(self.targets[key])
-        # prepend bos token to decoder input
-        target_point_sequence = torch.from_numpy(
-            np.vstack([self.BOS_TOKEN, points[idx_sequence - 1]])
-        )
-        # append eos token to indices
-        idx_sequence = torch.cat([idx_sequence, torch.from_numpy(self.EOS_TOKEN)])
+        target_point_sequence = points[idx_sequence - 1]
         return points, target_point_sequence, idx_sequence
 
 

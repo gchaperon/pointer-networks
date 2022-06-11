@@ -4,7 +4,7 @@ from ptrnets.model import (
     PointerNetworkForTSP,
     PointerNetworkForConvexHull,
 )
-from ptrnets.utils import tour_distance, random_solve
+from ptrnets.metrics import tour_distance, random_solve
 
 __all__ = [
     "TSP",

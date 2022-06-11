@@ -1,10 +1,12 @@
 import click
 import typing as tp
+import torch
 import pytorch_lightning as pl
 
 import ptrnets
 
 
+# breakpoint()
 @click.command()
 @click.option(
     "--train-split",
@@ -23,11 +25,12 @@ import ptrnets
     required=True,
 )
 @click.option("--learn-rate", default=0.001)
-@click.option("--hidden-size", default=512)
+@click.option("--hidden-size", default=256)
 @click.option("--init-range", nargs=2, default=(-0.08, 0.08))
 @click.option("--batch-size", default=128)
 @click.option("--max-grad-norm", default=2.0)
-def main_tsp(
+@click.option("--limit-train-batches", default=1.0)
+def train_tsp(
     train_split: tp.Tuple[ptrnets.TSP.NPointsT, ptrnets.TSP.AlgorithmT],
     test_split: tp.Tuple[ptrnets.TSP.NPointsT, ptrnets.TSP.AlgorithmT],
     learn_rate: float,
@@ -35,6 +38,7 @@ def main_tsp(
     init_range: tp.Tuple[float, float],
     batch_size: int,
     max_grad_norm: float,
+    limit_train_batches: float,
 ) -> tp.List[tp.Dict[str, float]]:
     dm = ptrnets.TSPDataModule(
         datadir="data",
@@ -51,14 +55,16 @@ def main_tsp(
     trainer = pl.Trainer(
         gpus=-1,
         gradient_clip_val=max_grad_norm,
+        limit_train_batches=limit_train_batches,
+        limit_val_batches=0,
         callbacks=[
-            pl.callbacks.EarlyStopping(monitor="train_loss", patience=1),
+            # pl.callbacks.EarlyStopping(monitor="train_loss", patience=1),
             pl.callbacks.ModelCheckpoint(monitor="train_loss"),
         ],
     )
     trainer.fit(model, dm)
-    test_results = trainer.test(model, dm)
-    return test_results
+    # test_results = trainer.test(model, dm)
+    # return test_results
 
 
 @click.command()
@@ -73,11 +79,11 @@ def main_tsp(
     required=True,
 )
 @click.option("--learn-rate", default=0.001)
-@click.option("--hidden-size", default=512)
+@click.option("--hidden-size", default=256)
 @click.option("--init-range", nargs=2, default=(-0.08, 0.08))
 @click.option("--batch-size", default=128)
 @click.option("--max-grad-norm", default=2.0)
-def main_convex_hull(
+def train_convex_hull(
     train_npoints: ptrnets.ConvexHull.NPointsT,
     test_npoints: ptrnets.ConvexHull.NPointsT,
     learn_rate: float,
@@ -86,6 +92,7 @@ def main_convex_hull(
     batch_size: int,
     max_grad_norm: float,
 ) -> tp.List[tp.Dict[str, float]]:
+
     datamodule = ptrnets.ConvexHullDataModule(
         "data", train_npoints, test_npoints, batch_size
     )
@@ -95,19 +102,62 @@ def main_convex_hull(
         learn_rate=learn_rate,
         init_range=init_range,
     )
+    logger = pl.loggers.TensorBoardLogger(
+        save_dir="logs",
+        name="convex-hull",
+        # log_graph=True,
+        default_hp_metric=False,
+    )
     trainer = pl.Trainer(
-        gpus=-1,
+        gpus=-1 if torch.cuda.is_available() else 0,
+        logger=logger,
         gradient_clip_val=max_grad_norm,
-        # limit_test_batches=2,
         callbacks=[
-            pl.callbacks.EarlyStopping(monitor="train_loss", patience=1),
-            pl.callbacks.ModelCheckpoint(monitor="train_loss"),
+            pl.callbacks.EarlyStopping(monitor="train/loss", patience=1),
+            pl.callbacks.ModelCheckpoint(monitor="train/loss"),
         ],
     )
-    trainer.fit(model, datamodule)
-    results = trainer.test(model, datamodule=datamodule)
+    # trainer.fit(model, datamodule)
+    results = trainer.test(
+        model,
+        datamodule=datamodule,
+        ckpt_path="logs/version_6/checkpoints/epoch=3-step=15627.ckpt",
+    )
     return results
 
 
+@click.group()
+def train() -> None:
+    pass
+
+
+train.add_command(train_tsp, name="tsp")
+train.add_command(train_convex_hull, name="convex-hull")
+
+
+@click.group()
+def replicate() -> None:
+    pass
+
+
+@replicate.command(name="tsp")
+def replicate_tsp():
+    pass
+
+
+@replicate.command(name="convex-hull")
+def replicate_convex_hull():
+    pass
+
+
+@click.group()
+def main():
+    pass
+
+
+main.add_command(train)
+main.add_command(replicate)
+
+
 if __name__ == "__main__":
-    main_convex_hull()
+    main()

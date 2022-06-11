@@ -6,8 +6,9 @@ import pytorch_lightning as pl
 import ptrnets
 import functools
 import operator
+import functools
 import typing as tp
-import ptrnets.utils as utils
+import ptrnets.metrics as metrics
 import dataclasses
 
 
@@ -60,6 +61,38 @@ class Attention(nn.Module):
             return scores.transpose(1, 2)
 
 
+def _prepend(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
+    """Prepends a tensor to each sequence"""
+    padded, lens = nn.utils.rnn.pad_packed_sequence(sequences)
+    # repeat tensor batch_size times
+    # tensor shape should be the same shape as each token in a sequence
+    batch_size = padded.shape[1]
+    padded = torch.cat(
+        [tensor.repeat(1, batch_size, *[1] * (padded.ndim - 2)), padded], dim=0
+    )
+    return nn.utils.rnn.pack_padded_sequence(
+        padded, lengths=lens + 1, enforce_sorted=False
+    )
+
+
+def _append(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
+    """Appends a tensor to each sequence
+
+    This is trickier because elements should be inserted between the last token and the
+    padding section"""
+    padded, lens = nn.utils.rnn.pad_packed_sequence(
+        sequences, total_length=len(sequences.batch_sizes) + 1
+    )
+    batch_size = padded.shape[1]
+    padded[lens, torch.arange(batch_size)] = tensor.repeat(
+        batch_size, *[1] * (padded.ndim - 2)
+    )
+
+    return nn.utils.rnn.pack_padded_sequence(
+        padded, lengths=lens + 1, enforce_sorted=False
+    )
+
+
 def _prepend_eos_token(encoder_output):
     if isinstance(encoder_output, PackedSequence):
         # shape: (max_enc_seq_len, batch, hidden_size)
@@ -102,6 +135,9 @@ def _cat_packed_sequences(packed_sequences: tp.List[PackedSequence]) -> PackedSe
 
 
 class PointerNetwork(pl.LightningModule):
+
+    END_SYMBOL_INDEX = 0
+
     def __init__(
         self,
         input_size: int,
@@ -115,6 +151,13 @@ class PointerNetwork(pl.LightningModule):
         self.learn_rate = learn_rate
         self.init_range = init_range
 
+        # => in the paper
+        self.start_symbol = nn.Parameter(torch.empty(input_size))
+        # <= in the paper
+        self.end_symbol = nn.Parameter(torch.empty(hidden_size))
+        # learn initial cell state
+        self.encoder_c_0 = nn.Parameter(torch.empty(hidden_size))
+        # modules
         self.encoder = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -141,21 +184,37 @@ class PointerNetwork(pl.LightningModule):
     def forward(
         self, encoder_input: PackedSequence, decoder_input: PackedSequence
     ) -> PackedSequence:
-        encoder_output, encoder_last_state = self.encoder(encoder_input)
-        decoder_output, decoder_last_state = self.decoder(
-            decoder_input, encoder_last_state
+        # expand encoder init state to match LSTM signature
+        batch_size = encoder_input.batch_sizes[0]
+        encoder_init_state = (
+            self.end_symbol.repeat(1, batch_size, 1),
+            self.encoder_c_0.repeat(1, batch_size, 1),
         )
-        # prepend vector of zeros to every example for eos token to point to
-        encoder_output = _prepend_eos_token(encoder_output)
-        return self.attention(encoder_output, decoder_output)
+        encoder_output, encoder_last_state = self.encoder(
+            encoder_input, encoder_init_state
+        )
+        # prepend start symbol to decoder input
+        decoder_output, decoder_last_state = self.decoder(
+            _prepend(decoder_input, self.start_symbol), encoder_last_state
+        )
+        # prepent end symbol to encoder output for attention
+        scores: PackedSequence = self.attention(
+            _prepend(encoder_output, self.end_symbol), decoder_output
+        )
+        return scores
 
     def training_step(self, batch: ptrnets.data._Batch, batch_idx: int) -> torch.Tensor:
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
+        # TODO: maybe append end symbol index inside dataset __getitem__
+        # instead of here?
+        target = _append(
+            target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
+        )
         loss = self._get_loss(prediction, target)
-        self.log("train_loss", loss.detach())
-        self.log("train_token_acc", utils.token_accuracy(prediction, target))
-        self.log("train_sequence_acc", utils.sequence_accuracy(prediction, target))
+        self.log("train/loss", loss.detach())
+        self.log("train/token_acc", metrics.token_accuracy(prediction, target))
+        self.log("train/sequence_acc", metrics.sequence_accuracy(prediction, target))
         return loss
 
     def _get_loss(self, prediction, target):
@@ -166,6 +225,10 @@ class PointerNetwork(pl.LightningModule):
     ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         # breakpoint()
         encoder_input, decoder_input, target = batch
+        # TODO: same as previous todo
+        target = _append(
+            target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
+        )
         prediction = self(encoder_input, decoder_input)
         return prediction, target
 
@@ -176,13 +239,11 @@ class PointerNetwork(pl.LightningModule):
             _cat_packed_sequences(items) for items in zip(*validation_step_outputs)
         )
 
-        self.log("validation_loss", self._get_loss(all_predictions, all_targets))
+        self.log("val/loss", self._get_loss(all_predictions, all_targets))
+        self.log("val/token_acc", metrics.token_accuracy(all_predictions, all_targets))
         self.log(
-            "validation_token_acc", utils.token_accuracy(all_predictions, all_targets)
-        )
-        self.log(
-            "validation_sequence_acc",
-            utils.sequence_accuracy(all_predictions, all_targets),
+            "val/sequence_acc",
+            metrics.sequence_accuracy(all_predictions, all_targets),
         )
 
     def test_step(
@@ -199,6 +260,8 @@ class PointerNetwork(pl.LightningModule):
                     self.decode(points_padded[:len_]), device=points_padded.device
                 )
             )
+
+        breakpoint()
 
         return (
             encoder_input,
@@ -326,13 +389,13 @@ class PointerNetworkForTSP(PointerNetwork):
         )
 
         decoded_tour_distance = torch.mean(
-            utils.tour_distance(all_point_sets, all_decoded)
+            metrics.tour_distance(all_point_sets, all_decoded)
         )
         # remove all trailing 0s in target
         padded, lens = nn.utils.rnn.pad_packed_sequence(all_targets)
         all_targets = nn.utils.rnn.pack_padded_sequence(padded, lens - 1)
         target_tour_distance = torch.mean(
-            utils.tour_distance(all_point_sets, all_targets)
+            metrics.tour_distance(all_point_sets, all_targets)
         )
         self.log("test_decoded_tour_distance", decoded_tour_distance)
         self.log("test_target_tour_distance", target_tour_distance)
@@ -414,8 +477,8 @@ class PointerNetworkForConvexHull(PointerNetwork):
         all_point_sets, all_decoded, all_targets = (
             _cat_packed_sequences(items) for items in zip(*test_step_outputs)
         )
-        poly_acc = utils.polygon_accuracy(all_point_sets, all_decoded, all_targets)
-        coverages = utils.area_coverage(all_point_sets, all_decoded, all_targets)
+        poly_acc = metrics.polygon_accuracy(all_point_sets, all_decoded, all_targets)
+        coverages = metrics.area_coverage(all_point_sets, all_decoded, all_targets)
 
         if (coverages < 0).sum() / coverages.shape[0] > 0.01:
             # this is considered as FAIL in the paper
