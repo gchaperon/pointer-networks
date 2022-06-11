@@ -4,6 +4,7 @@ from torch.nn.utils.rnn import PackedSequence
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import ptrnets
+import functools
 import operator
 import typing as tp
 import ptrnets.utils as utils
@@ -421,6 +422,5 @@ class PointerNetworkForConvexHull(PointerNetwork):
             mean_coverage = -1.0
         else:
             mean_coverage = coverages[coverages >= 0].mean().item()
-
         self.log("poly_acc", poly_acc)
         self.log("mean_coverage", mean_coverage)
