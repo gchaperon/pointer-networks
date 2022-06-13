@@ -178,9 +178,6 @@ class PointerNetwork(pl.LightningModule):
         for param in self.parameters():
             nn.init.uniform_(param, *self.init_range)
 
-    # NOTE: on ignore[override], pytorch_lightning's forward method
-    # should not be typed, see torch.nn.Module, the method is just
-    # not there (no need)
     def forward(
         self, encoder_input: PackedSequence, decoder_input: PackedSequence
     ) -> PackedSequence:
@@ -231,6 +228,9 @@ class PointerNetwork(pl.LightningModule):
             target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
         )
         prediction = self(encoder_input, decoder_input)
+        self.log("val/loss", self._get_loss(prediction, target), batch_size = len(target.)
+        self.log(
+        # breakpoint()
         return prediction, target
 
     def validation_epoch_end(
@@ -240,6 +240,7 @@ class PointerNetwork(pl.LightningModule):
             _cat_packed_sequences(items) for items in zip(*validation_step_outputs)
         )
 
+        # breakpoint()
         self.log("val/loss", self._get_loss(all_predictions, all_targets))
         self.log("val/token_acc", metrics.token_accuracy(all_predictions, all_targets))
         self.log(
@@ -309,23 +310,29 @@ class PointerNetworkForConvexHull(PointerNetwork):
     ) -> tp.List[int]:
         assert input.ndim == 2, "input should be a 2 dim tensor, a sequence of points"
         maxlen = maxlen or input.shape[0] + 2
-        encoder_output, encoder_last_hidden = self.encoder(
-            nn.utils.rnn.pack_sequence([input])
+
+        encoder_init_state = (
+            self.end_symbol.view(1, 1, -1),
+            self.encoder_c_0.view(1, 1, -1),
         )
-        encoder_output = _prepend_eos_token(encoder_output)
+        encoder_output, encoder_last_hidden = self.encoder(
+            nn.utils.rnn.pack_sequence([input]), encoder_init_state
+        )
+        encoder_output = _prepend(encoder_output, self.end_symbol)
 
         beams: tp.List[_Beam] = [
             _Beam(
                 indices=[],
                 score=0.0,
                 decoder_input=nn.utils.rnn.pack_sequence(
-                    [torch.ones(1, 2, device=encoder_output.data.device) * -1]
+                    [self.start_symbol.unsqueeze(0)]
                 ),
                 last_hidden=encoder_last_hidden,
                 maxlen=maxlen,
             )
         ]
 
+        # breakpoint()
         while not all(beam.is_done() for beam in beams):
             candidates: tp.List[_Beam] = []
             for beam in beams:
@@ -344,12 +351,16 @@ class PointerNetworkForConvexHull(PointerNetwork):
                     self.attention(encoder_output, decoder_output)
                 )[0][0, 0]
                 # mask invalid values
-                # while indices is not a valid polygon (e.g. less than 3 points), mask
-                # all values so a new one must be produced.
+                # if indices is not a valid polygon (e.g. less than 3 points), mask
+                # all previous values so a new one must be produced.
                 # when indices is a valid polygon, mask everything except first value so
-                # that no preivous point can be decoded, except for the first one which
+                # that no previous point can be decoded, except for the first one which
                 # means closing the polygon.
-                mask = beam.indices if len(beam.indices) else beam.indices[1:]
+                mask = (
+                    [self.END_SYMBOL_INDEX, *beam.indices]
+                    if len(beam.indices) < 3
+                    else beam.indices[1:]
+                )
                 attention_scores[mask] = float("-inf")
                 probs, indices = attention_scores.softmax(dim=0).sort(descending=True)
                 for prob, index in zip(probs[:nbeams], indices[:nbeams]):
@@ -376,6 +387,7 @@ class PointerNetworkForConvexHull(PointerNetwork):
             tp.Tuple[PackedSequence, PackedSequence, PackedSequence]
         ],
     ) -> None:
+        breakpoint()
         all_point_sets, all_decoded, all_targets = (
             _cat_packed_sequences(items) for items in zip(*test_step_outputs)
         )

@@ -103,7 +103,6 @@ def train_convex_hull(
         learn_rate=learn_rate,
         init_range=init_range,
     )
-
     logger = pl.loggers.TensorBoardLogger(
         save_dir="logs",
         name="convex-hull",
@@ -117,9 +116,17 @@ def train_convex_hull(
             pl.callbacks.EarlyStopping(monitor="train/loss", patience=3),
             pl.callbacks.ModelCheckpoint(monitor="train/loss"),
         ],
-        limit_test_batches=1,
+        max_epochs=1000
+        # limit_test_batches=1,
     )
     trainer.fit(model, datamodule)
+    # trainer.validate(
+    #     model,
+    #     datamodule,
+    #     ckpt_path=next(
+    #         pathlib.Path("logs/convex-hull/version_0/checkpoints").iterdir()
+    #     ),
+    # )
     results = trainer.test(
         model,
         datamodule=datamodule,

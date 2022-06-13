@@ -248,6 +248,7 @@ class ConvexHullDataModule(pl.LightningDataModule):
         train_npoints: ConvexHull.NPointsT,
         test_npoints: ConvexHull.NPointsT,
         batch_size: int,
+        val_fraction: float = 0.01,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=(datadir,))
@@ -256,15 +257,23 @@ class ConvexHullDataModule(pl.LightningDataModule):
         self.train_npoints = train_npoints
         self.test_npoints = test_npoints
         self.batch_size = batch_size
+        self.val_fraction = val_fraction
 
     def setup(self, stage: tp.Optional[str] = None) -> None:
-        if stage in ("fit", "validate", "test", None):
-            self.convex_hull_test = ConvexHull(
-                self.datadir, npoints=self.test_npoints, split="test"
+        if stage in ("fit", "validate", None):
+            train_full = ConvexHull(
+                self.datadir, npoints=self.test_npoints, split="train"
             )
-        if stage in ("fit", None):
-            self.convex_hull_train = ConvexHull(
-                self.datadir, npoints=self.train_npoints, split="train"
+            nval = int(len(train_full) * self.val_fraction)
+            ntrain = len(train_full) - nval
+            (
+                self.convex_hull_train,
+                self.convex_hull_val,
+            ) = torch.utils.data.random_split(train_full, lengths=[ntrain, nval])
+
+        if stage in ("test", None):
+            self.convex_hull_test = ConvexHull(
+                self.datadir, npoints=self.train_npoints, split="test"
             )
 
     def train_dataloader(self) -> torch.utils.data.DataLoader[_Batch]:
@@ -273,20 +282,26 @@ class ConvexHullDataModule(pl.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=os.cpu_count() or 0,
-            # num_workers=0,
             collate_fn=collate_into_packed_sequence,
             pin_memory=True,
         )
 
     def val_dataloader(self) -> torch.utils.data.DataLoader[_Batch]:
         return torch.utils.data.DataLoader(
-            dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_test),
+            dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_val),
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=os.cpu_count() or 0,
-            # num_workers=0,
             collate_fn=collate_into_packed_sequence,
             pin_memory=True,
         )
 
-    test_dataloader = val_dataloader
+    def test_dataloader(self) -> torch.utils.data.DataLoader[_Batch]:
+        return torch.utils.data.DataLoader(
+            dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_test),
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=os.cpu_count() or 0,
+            collate_fn=collate_into_packed_sequence,
+            pin_memory=True,
+        )
