@@ -1,9 +1,9 @@
 env/
-data/**/*.txt
-*.zip
-*.tar.gz
-*.swp
-lightning_logs/
+data/
+!data/.gitkeep
+logs/
 __pycache__/
+*.swp
+
 
 .vimrc
