@@ -209,8 +209,8 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
         fname = self._options_to_file.get((npoints, split))
         if fname is None:
             raise ValueError(
-                "Invalid option combo."
-                "Check the paper/data dir for available combinations"
+                "Invalid option combo. "
+                "Check the paper (or the data dir) for available combinations"
             )
 
         with uopen(pathlib.Path(datadir) / fname) as file:

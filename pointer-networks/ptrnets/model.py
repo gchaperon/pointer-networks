@@ -217,13 +217,14 @@ class PointerNetwork(pl.LightningModule):
         self.log("train/sequence_acc", metrics.sequence_accuracy(prediction, target))
         return loss
 
-    def _get_loss(self, prediction, target):
+    def _get_loss(
+        self, prediction: PackedSequence, target: PackedSequence
+    ) -> torch.Tensor:
         return F.cross_entropy(prediction.data, target.data)
 
     def validation_step(
         self, batch: ptrnets.data._Batch, batch_idx: int
     ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
-        # breakpoint()
         encoder_input, decoder_input, target = batch
         # TODO: same as previous todo
         target = _append(
@@ -261,8 +262,6 @@ class PointerNetwork(pl.LightningModule):
                 )
             )
 
-        breakpoint()
-
         return (
             encoder_input,
             nn.utils.rnn.pack_sequence(decoded, enforce_sorted=False),
@@ -277,15 +276,119 @@ class PointerNetwork(pl.LightningModule):
 class _Beam:
     indices: tp.List[int]
     score: float
-    decoder_input: torch.Tensor = dataclasses.field(repr=False)
+    decoder_input: PackedSequence = dataclasses.field(repr=False)
     # see nn.LSTM docs for `last_hidden` type
     last_hidden: tp.Tuple[torch.Tensor, torch.Tensor] = dataclasses.field(repr=False)
     maxlen: tp.Optional[int] = None
 
+    def __post_init__(self) -> None:
+        """There are some a cases where the beam is finished but is in a "inconsistent"
+        state, like being to long but not ending in 0 or ending in 0 but without having
+        returned to the first decoded index. To keep consistency of the format i'm
+        taking some measures here."""
+        if self.is_done() and self.indices[-1] != 0:
+            self.indices.append(0)
+        if self.is_done() and self.indices[-2] != self.indices[0]:
+            self.indices.insert(-1, self.indices[0])
+
     def is_done(self) -> bool:
+        # NOTE: this is_done logic only applies to convex hull
         ends_with_zero = len(self.indices) > 0 and self.indices[-1] == 0
+        has_looped = len(self.indices) > 1 and self.indices[0] == self.indices[-1]
         is_too_long = len(self.indices) > self.maxlen if self.maxlen else False
-        return is_too_long or ends_with_zero
+        return ends_with_zero or has_looped or is_too_long
+
+
+class PointerNetworkForConvexHull(PointerNetwork):
+    @torch.no_grad()
+    def decode(
+        self,
+        input: torch.Tensor,
+        nbeams: int = 3,
+        maxlen: tp.Optional[int] = None,
+    ) -> tp.List[int]:
+        assert input.ndim == 2, "input should be a 2 dim tensor, a sequence of points"
+        maxlen = maxlen or input.shape[0] + 2
+        encoder_output, encoder_last_hidden = self.encoder(
+            nn.utils.rnn.pack_sequence([input])
+        )
+        encoder_output = _prepend_eos_token(encoder_output)
+
+        beams: tp.List[_Beam] = [
+            _Beam(
+                indices=[],
+                score=0.0,
+                decoder_input=nn.utils.rnn.pack_sequence(
+                    [torch.ones(1, 2, device=encoder_output.data.device) * -1]
+                ),
+                last_hidden=encoder_last_hidden,
+                maxlen=maxlen,
+            )
+        ]
+
+        while not all(beam.is_done() for beam in beams):
+            candidates: tp.List[_Beam] = []
+            for beam in beams:
+                if beam.is_done():
+                    candidates.append(beam)
+                    continue
+
+                decoder_output, decoder_last_hidden = self.decoder(
+                    beam.decoder_input, beam.last_hidden
+                )
+                # pad_packed_sequence returns a tuple: the padded tensor and the
+                # original lengths. The padded tensor has shape [1, 1, L], because it
+                # has a batch size of 1 and is a single token for which to compute the
+                # attention scores, so I select using [0][0, 0]
+                attention_scores = nn.utils.rnn.pad_packed_sequence(
+                    self.attention(encoder_output, decoder_output)
+                )[0][0, 0]
+                # mask invalid values
+                # while indices is not a valid polygon (e.g. less than 3 points), mask
+                # all values so a new one must be produced.
+                # when indices is a valid polygon, mask everything except first value so
+                # that no preivous point can be decoded, except for the first one which
+                # means closing the polygon.
+                mask = beam.indices if len(beam.indices) else beam.indices[1:]
+                attention_scores[mask] = float("-inf")
+                probs, indices = attention_scores.softmax(dim=0).sort(descending=True)
+                for prob, index in zip(probs[:nbeams], indices[:nbeams]):
+                    candidates.append(
+                        _Beam(
+                            indices=[*beam.indices, index.item()],
+                            score=beam.score - torch.log(prob).item(),
+                            decoder_input=nn.utils.rnn.pack_sequence(
+                                [input[None, index - 1]]
+                            ),
+                            last_hidden=decoder_last_hidden,
+                            maxlen=maxlen,
+                        )
+                    )
+                beams = sorted(candidates, key=operator.attrgetter("score"))[:nbeams]
+
+        # NOTE: remove 0 index at the end to match :class:`ptrnsets.data.ConvexHull`
+        # format
+        return beams[0].indices[:-1]
+
+    def test_epoch_end(
+        self,
+        test_step_outputs: tp.List[
+            tp.Tuple[PackedSequence, PackedSequence, PackedSequence]
+        ],
+    ) -> None:
+        all_point_sets, all_decoded, all_targets = (
+            _cat_packed_sequences(items) for items in zip(*test_step_outputs)
+        )
+        poly_acc = metrics.polygon_accuracy(all_point_sets, all_decoded, all_targets)
+        coverages = metrics.area_coverages(all_point_sets, all_decoded, all_targets)
+
+        if (coverages < 0).sum() / coverages.shape[0] > 0.01:
+            # this is considered as FAIL in the paper
+            mean_coverage = -1.0
+        else:
+            mean_coverage = coverages[coverages >= 0].mean().item()
+        self.log("test/poly_acc", poly_acc)
+        self.log("test/mean_coverage", mean_coverage)
 
 
 class PointerNetworkForTSP(PointerNetwork):
@@ -317,7 +420,7 @@ class PointerNetworkForTSP(PointerNetwork):
                     continue
 
                 # finish decoding when all nodes have been visited
-                # go back to first node decoded and append 0 to indicate its done
+                # go back to first decoded node and append 0 to indicate its done
                 if set(beam.indices) == set(range(1, len(input) + 1)):
                     candidates.append(
                         dataclasses.replace(
@@ -403,87 +506,3 @@ class PointerNetworkForTSP(PointerNetwork):
             "test_tour_distance_diff",
             decoded_tour_distance - target_tour_distance,
         )
-
-
-class PointerNetworkForConvexHull(PointerNetwork):
-    @torch.no_grad()
-    def decode(
-        self,
-        input: torch.Tensor,
-        nbeams: int = 3,
-        maxlen: tp.Optional[int] = None,
-    ) -> tp.List[int]:
-        assert input.ndim == 2, "input should be a 2 dim tensor, a sequence of points"
-        maxlen = maxlen or input.shape[0] + 2
-        encoder_output, encoder_last_hidden = self.encoder(
-            nn.utils.rnn.pack_sequence([input])
-        )
-        encoder_output = _prepend_eos_token(encoder_output)
-
-        beams: tp.List[_Beam] = [
-            _Beam(
-                indices=[],
-                score=0.0,
-                decoder_input=nn.utils.rnn.pack_sequence(
-                    [torch.ones(1, 2, device=encoder_output.data.device) * -1]
-                ),
-                last_hidden=encoder_last_hidden,
-                maxlen=maxlen,
-            )
-        ]
-
-        while not all(beam.is_done() for beam in beams):
-            # breakpoint()
-            candidates: tp.List[_Beam] = []
-            for beam in beams:
-                if beam.is_done():
-                    candidates.append(beam)
-                    continue
-
-                decoder_output, decoder_last_hidden = self.decoder(
-                    beam.decoder_input, beam.last_hidden
-                )
-                # pad_packed_sequence returns a tuple, the padded
-                # tensor and the original lengths, and then my padded
-                # tensor has shape [1, 1, L] because its a batch of 1
-                # and a single token for which to compute the attention
-                # scores, so I select using [0][0, 0]
-                attention_scores = nn.utils.rnn.pad_packed_sequence(
-                    self.attention(encoder_output, decoder_output)
-                )[0][0, 0]
-                probs, indices = attention_scores.softmax(dim=0).sort(descending=True)
-                for prob, index in zip(probs[:nbeams], indices[:nbeams]):
-                    candidates.append(
-                        _Beam(
-                            indices=[*beam.indices, index.item()],
-                            score=beam.score - torch.log(prob).item(),
-                            decoder_input=nn.utils.rnn.pack_sequence(
-                                [input[None, index - 1]]
-                            ),
-                            last_hidden=decoder_last_hidden,
-                            maxlen=maxlen,
-                        )
-                    )
-                beams = sorted(candidates, key=operator.attrgetter("score"))[:nbeams]
-
-        return beams[0].indices
-
-    def test_epoch_end(
-        self,
-        test_step_outputs: tp.List[
-            tp.Tuple[PackedSequence, PackedSequence, PackedSequence]
-        ],
-    ) -> None:
-        all_point_sets, all_decoded, all_targets = (
-            _cat_packed_sequences(items) for items in zip(*test_step_outputs)
-        )
-        poly_acc = metrics.polygon_accuracy(all_point_sets, all_decoded, all_targets)
-        coverages = metrics.area_coverage(all_point_sets, all_decoded, all_targets)
-
-        if (coverages < 0).sum() / coverages.shape[0] > 0.01:
-            # this is considered as FAIL in the paper
-            mean_coverage = -1.0
-        else:
-            mean_coverage = coverages[coverages >= 0].mean().item()
-        self.log("poly_acc", poly_acc)
-        self.log("mean_coverage", mean_coverage)

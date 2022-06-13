@@ -1,3 +1,4 @@
+import pathlib
 import click
 import typing as tp
 import torch
@@ -67,7 +68,7 @@ def train_tsp(
     # return test_results
 
 
-@click.command()
+@click.command(context_settings={"show_default": True})
 @click.option(
     "--train-npoints",
     type=click.Choice(tp.get_args(ptrnets.ConvexHull.NPointsT)),
@@ -102,10 +103,10 @@ def train_convex_hull(
         learn_rate=learn_rate,
         init_range=init_range,
     )
+
     logger = pl.loggers.TensorBoardLogger(
         save_dir="logs",
         name="convex-hull",
-        # log_graph=True,
         default_hp_metric=False,
     )
     trainer = pl.Trainer(
@@ -113,15 +114,18 @@ def train_convex_hull(
         logger=logger,
         gradient_clip_val=max_grad_norm,
         callbacks=[
-            pl.callbacks.EarlyStopping(monitor="train/loss", patience=1),
+            pl.callbacks.EarlyStopping(monitor="train/loss", patience=3),
             pl.callbacks.ModelCheckpoint(monitor="train/loss"),
         ],
+        limit_test_batches=1,
     )
-    # trainer.fit(model, datamodule)
+    trainer.fit(model, datamodule)
     results = trainer.test(
         model,
         datamodule=datamodule,
-        ckpt_path="logs/version_6/checkpoints/epoch=3-step=15627.ckpt",
+        # ckpt_path=next(
+        #     pathlib.Path("logs/convex-hull/version_0/checkpoints").iterdir()
+        # ),
     )
     return results
 
@@ -160,4 +164,4 @@ main.add_command(replicate)
 
 
 if __name__ == "__main__":
-    main()
+    train_convex_hull()

@@ -48,4 +48,4 @@ def uopen(
                         for fname in myzip.namelist()
                     )
     else:
-        raise ValueError(f"Invalid {path=}")
+        raise ValueError(f"Invalid suffix in {path=}")

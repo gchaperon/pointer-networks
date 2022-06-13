@@ -99,17 +99,17 @@ def polygon_accuracy(
         target_len,
     ) in zip(*pad(point_sets), *pad(predictions), *pad(targets)):
         target_polygon = shapely.geometry.Polygon(
-            point_set[target[: target_len - 1] - 1]
+            point_set[target[: target_len - 1] - 1].tolist()
         )
         predicted_polygon = shapely.geometry.Polygon(
-            point_set[prediction[: prediction_len - 1] - 1]
+            point_set[prediction[: prediction_len - 1] - 1].tolist()
         )
         correct.append(target_polygon.equals(predicted_polygon))
 
     return sum(correct) / len(correct)
 
 
-def area_coverage(
+def area_coverages(
     point_sets: PackedSequence, predictions: PackedSequence, targets: PackedSequence
 ) -> torch.Tensor:
     pad = functools.partial(torch.nn.utils.rnn.pad_packed_sequence, batch_first=True)
@@ -123,14 +123,14 @@ def area_coverage(
         target_len,
     ) in zip(*pad(point_sets), *pad(predictions), *pad(targets)):
         target_polygon = shapely.geometry.Polygon(
-            point_set[target[: target_len - 1] - 1]
+            point_set[target[: target_len - 1] - 1].tolist()
         )
         predicted_polygon = shapely.geometry.Polygon(
-            point_set[prediction[: prediction_len - 1] - 1]
+            point_set[prediction[: prediction_len - 1] - 1].tolist()
         )
         if predicted_polygon.is_simple:
             coverages.append(predicted_polygon.area / target_polygon.area)
         else:
-            coverages.append(-1)
+            coverages.append(-1.)
 
     return torch.tensor(coverages)
