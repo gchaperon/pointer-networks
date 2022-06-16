@@ -62,25 +62,25 @@ def random_solve(n_points: int) -> tp.List[int]:
     return [1, *random.sample(range(2, n_points + 1), n_points - 1), 1]
 
 
-def token_accuracy(prediction: torch.Tensor, target: torch.Tensor) -> float:
+def token_accuracy(
+    prediction: PackedSequence,
+    target: PackedSequence,
+) -> torch.Tensor:
     # prediction shape: (L, B, C)
     # target shape: (L, B)
-    if isinstance(prediction, PackedSequence) and isinstance(target, PackedSequence):
-        correct = prediction.data.argmax(1) == target.data
-    else:
-        correct = prediction.flatten(0, 1).argmax(1) == target.flatten()
+    correct: torch.Tensor = prediction.data.argmax(1) == target.data
     return correct.sum() / len(correct)
 
 
-def sequence_accuracy(prediction: torch.Tensor, target: torch.Tensor) -> float:
+def sequence_accuracy(
+    prediction: PackedSequence, target: PackedSequence
+) -> torch.Tensor:
     # prediction shape: (L, B, C)
     # target shape: (L, B)
-    if isinstance(prediction, PackedSequence) and isinstance(target, PackedSequence):
-        unpack = torch.nn.utils.rnn.pad_packed_sequence
-        prediction, _ = unpack(prediction)
-        target, _ = unpack(target)
-    prediction = prediction.argmax(2)
-    correct = (prediction == target).all(dim=0)
+    pad = torch.nn.utils.rnn.pad_packed_sequence
+    prediction_padded, _ = pad(prediction)
+    target_padded, _ = pad(target)
+    correct: torch.Tensor = (prediction_padded.argmax(2) == target_padded).all(dim=0)
     return correct.sum() / len(correct)
 
 
@@ -131,6 +131,6 @@ def area_coverages(
         if predicted_polygon.is_simple:
             coverages.append(predicted_polygon.area / target_polygon.area)
         else:
-            coverages.append(-1.)
+            coverages.append(-1.0)
 
     return torch.tensor(coverages)

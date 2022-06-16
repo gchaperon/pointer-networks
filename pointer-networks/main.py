@@ -103,37 +103,48 @@ def train_convex_hull(
         learn_rate=learn_rate,
         init_range=init_range,
     )
-    logger = pl.loggers.TensorBoardLogger(
-        save_dir="logs",
-        name="convex-hull",
-        default_hp_metric=False,
-    )
+
+    checkpoint_callback_kwargs = {
+        "monitor": "val/sequence_acc",
+        "mode": "max",
+    }
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(**checkpoint_callback_kwargs)
     trainer = pl.Trainer(
         gpus=-1 if torch.cuda.is_available() else 0,
-        logger=logger,
+        logger=pl.loggers.TensorBoardLogger(
+            save_dir="logs",
+            name="convex-hull",
+            default_hp_metric=False,
+        ),
         gradient_clip_val=max_grad_norm,
         callbacks=[
-            pl.callbacks.EarlyStopping(monitor="train/loss", patience=3),
-            pl.callbacks.ModelCheckpoint(monitor="train/loss"),
+            pl.callbacks.LearningRateMonitor(),
+            pl.callbacks.EarlyStopping(
+                **checkpoint_callback_kwargs,
+                patience=10,
+            ),
+            checkpoint_callback,
         ],
-        max_epochs=1000
-        # limit_test_batches=1,
+        max_epochs=200,
+        deterministic=True,
     )
-    trainer.fit(model, datamodule)
-    # trainer.validate(
-    #     model,
-    #     datamodule,
-    #     ckpt_path=next(
-    #         pathlib.Path("logs/convex-hull/version_0/checkpoints").iterdir()
-    #     ),
-    # )
+    # trainer.fit(model, datamodule)
+    trainer.validate(
+        model,
+        datamodule,
+        ckpt_path=next(
+            pathlib.Path("r2_logs/convex-hull/version_0/checkpoints").iterdir()
+        ),
+    )
     results = trainer.test(
         model,
         datamodule=datamodule,
-        # ckpt_path=next(
-        #     pathlib.Path("logs/convex-hull/version_0/checkpoints").iterdir()
-        # ),
+        # ckpt_path=checkpoint_callback.best_model_path,
+        ckpt_path=next(
+            pathlib.Path("r2_logs/convex-hull/version_0/checkpoints").iterdir()
+        ),
     )
+    print(results)
     return results
 
 
@@ -152,23 +163,49 @@ def replicate() -> None:
 
 
 @replicate.command(name="tsp")
-def replicate_tsp():
+def replicate_tsp() -> None:
     pass
 
 
 @replicate.command(name="convex-hull")
-def replicate_convex_hull():
+def replicate_convex_hull() -> None:
     pass
 
 
 @click.group()
-def main():
+def optimize() -> None:
+    pass
+
+
+@optimize.command(name="tsp")
+def optimize_tsp() -> None:
+    pass
+
+
+@optimize.command(name="convex-hull")
+def optimize_convex_hull() -> None:
+    pass
+
+
+@click.group()
+def main() -> None:
     pass
 
 
 main.add_command(train)
 main.add_command(replicate)
+main.add_command(optimize)
 
 
 if __name__ == "__main__":
-    train_convex_hull()
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore",
+        message=r".*(val|test)_dataloader.*num_workers",
+        category=UserWarning,
+    )
+
+    pl.seed_everything(42, workers=True)
+    res = train_convex_hull()
+    print(res)

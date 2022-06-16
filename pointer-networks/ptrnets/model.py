@@ -4,9 +4,7 @@ from torch.nn.utils.rnn import PackedSequence
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import ptrnets
-import functools
 import operator
-import functools
 import typing as tp
 import ptrnets.metrics as metrics
 import dataclasses
@@ -91,32 +89,6 @@ def _append(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
     return nn.utils.rnn.pack_padded_sequence(
         padded, lengths=lens + 1, enforce_sorted=False
     )
-
-
-def _prepend_eos_token(encoder_output):
-    if isinstance(encoder_output, PackedSequence):
-        # shape: (max_enc_seq_len, batch, hidden_size)
-        encoder_unpacked, encoder_lens = nn.utils.rnn.pad_packed_sequence(
-            encoder_output
-        )
-        encoder_unpacked = torch.cat(
-            [
-                torch.zeros(
-                    1, *encoder_unpacked.shape[1:], device=encoder_unpacked.device
-                ),
-                encoder_unpacked,
-            ]
-        )
-        return nn.utils.rnn.pack_padded_sequence(
-            encoder_unpacked, lengths=encoder_lens + 1, enforce_sorted=False
-        )
-    else:
-        return torch.cat(
-            [
-                torch.zeros(1, *encoder_output.shape[1:], device=encoder_output.device),
-                encoder_output,
-            ]
-        )
 
 
 def _cat_packed_sequences(packed_sequences: tp.List[PackedSequence]) -> PackedSequence:
@@ -228,27 +200,51 @@ class PointerNetwork(pl.LightningModule):
             target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
         )
         prediction = self(encoder_input, decoder_input)
-        self.log("val/loss", self._get_loss(prediction, target), batch_size = len(target.)
         self.log(
-        # breakpoint()
-        return prediction, target
-
-    def validation_epoch_end(
-        self, validation_step_outputs: tp.List[tp.Tuple[torch.Tensor, torch.Tensor]]
-    ) -> None:
-        all_predictions, all_targets = (
-            _cat_packed_sequences(items) for items in zip(*validation_step_outputs)
+            "val/loss",
+            self._get_loss(prediction, target),
+            batch_size=target.batch_sizes[0],
         )
-
-        # breakpoint()
-        self.log("val/loss", self._get_loss(all_predictions, all_targets))
-        self.log("val/token_acc", metrics.token_accuracy(all_predictions, all_targets))
+        self.log(
+            "val/token_acc",
+            metrics.token_accuracy(prediction, target),
+            batch_size=target.batch_sizes[0],
+        )
         self.log(
             "val/sequence_acc",
-            metrics.sequence_accuracy(all_predictions, all_targets),
+            metrics.sequence_accuracy(prediction, target),
+            batch_size=target.batch_sizes[0],
         )
 
     def test_step(
+        self, batch: ptrnets.data._Batch, batch_idx: int
+    ) -> tp.Tuple[PackedSequence, PackedSequence]:
+        """test_step logs the same as val_step, and returns the necesary data
+        for test_epoch_end to do the decoding. Test epoch end will take quite
+        some time."""
+        encoder_input, decoder_input, target = batch
+        target_w_end_token = _append(
+            target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
+        )
+        prediction = self(encoder_input, decoder_input)
+        self.log(
+            "test/loss",
+            self._get_loss(prediction, target_w_end_token),
+            batch_size=target.batch_sizes[0],
+        )
+        self.log(
+            "test/token_acc",
+            metrics.token_accuracy(prediction, target_w_end_token),
+            batch_size=target.batch_sizes[0],
+        )
+        self.log(
+            "test/sequence_acc",
+            metrics.sequence_accuracy(prediction, target_w_end_token),
+            batch_size=target.batch_sizes[0],
+        )
+        return encoder_input, target
+
+    def _test_step_old(
         self, batch: ptrnets.data._Batch, batch_idx: int
     ) -> tp.Tuple[PackedSequence, PackedSequence, PackedSequence]:
         encoder_input, _, target = batch
@@ -269,8 +265,14 @@ class PointerNetwork(pl.LightningModule):
             target,
         )
 
-    def configure_optimizers(self) -> torch.optim.Optimizer:
-        return torch.optim.Adam(self.parameters(), lr=self.learn_rate)
+    def configure_optimizers(self) -> tp.Dict["str", tp.Any]:
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learn_rate)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": torch.optim.lr_scheduler.ExponentialLR(
+                optimizer, gamma=0.95
+            ),
+        }
 
 
 @dataclasses.dataclass
@@ -332,7 +334,6 @@ class PointerNetworkForConvexHull(PointerNetwork):
             )
         ]
 
-        # breakpoint()
         while not all(beam.is_done() for beam in beams):
             candidates: tp.List[_Beam] = []
             for beam in beams:
@@ -361,7 +362,9 @@ class PointerNetworkForConvexHull(PointerNetwork):
                     if len(beam.indices) < 3
                     else beam.indices[1:]
                 )
-                attention_scores[mask] = float("-inf")
+                attention_scores[
+                    torch.tensor(mask, device=attention_scores.device)
+                ] = float("-inf")
                 probs, indices = attention_scores.softmax(dim=0).sort(descending=True)
                 for prob, index in zip(probs[:nbeams], indices[:nbeams]):
                     candidates.append(
@@ -383,11 +386,9 @@ class PointerNetworkForConvexHull(PointerNetwork):
 
     def test_epoch_end(
         self,
-        test_step_outputs: tp.List[
-            tp.Tuple[PackedSequence, PackedSequence, PackedSequence]
-        ],
+        test_step_outputs: tp.List[tp.Tuple[PackedSequence, PackedSequence]],
     ) -> None:
-        breakpoint()
+        return
         all_point_sets, all_decoded, all_targets = (
             _cat_packed_sequences(items) for items in zip(*test_step_outputs)
         )

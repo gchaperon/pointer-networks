@@ -248,7 +248,7 @@ class ConvexHullDataModule(pl.LightningDataModule):
         train_npoints: ConvexHull.NPointsT,
         test_npoints: ConvexHull.NPointsT,
         batch_size: int,
-        val_fraction: float = 0.01,
+        val_fraction: float = 0.05,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=(datadir,))
@@ -291,9 +291,7 @@ class ConvexHullDataModule(pl.LightningDataModule):
             dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_val),
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=os.cpu_count() or 0,
             collate_fn=collate_into_packed_sequence,
-            pin_memory=True,
         )
 
     def test_dataloader(self) -> torch.utils.data.DataLoader[_Batch]:
@@ -301,7 +299,5 @@ class ConvexHullDataModule(pl.LightningDataModule):
             dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_test),
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=os.cpu_count() or 0,
             collate_fn=collate_into_packed_sequence,
-            pin_memory=True,
         )
