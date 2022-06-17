@@ -217,7 +217,7 @@ class PointerNetwork(pl.LightningModule):
         )
 
     def test_step(
-        self, batch: ptrnets.data._Batch, batch_idx: int
+        self, batch: ptrnets.data._Batch, batch_idx: int, dataloader_idx: int = 0
     ) -> tp.Tuple[PackedSequence, PackedSequence]:
         """test_step logs the same as val_step, and returns the necesary data
         for test_epoch_end to do the decoding. Test epoch end will take quite
@@ -227,20 +227,32 @@ class PointerNetwork(pl.LightningModule):
             target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
         )
         prediction = self(encoder_input, decoder_input)
-        self.log(
-            "test/loss",
-            self._get_loss(prediction, target_w_end_token),
-            batch_size=target.batch_sizes[0],
-        )
-        self.log(
-            "test/token_acc",
-            metrics.token_accuracy(prediction, target_w_end_token),
-            batch_size=target.batch_sizes[0],
-        )
-        self.log(
-            "test/sequence_acc",
-            metrics.sequence_accuracy(prediction, target_w_end_token),
-            batch_size=target.batch_sizes[0],
+        # self.log(
+        #     "test/loss",
+        #     self._get_loss(prediction, target_w_end_token),
+        #     batch_size=target.batch_sizes[0],
+        # )
+        # self.log(
+        #     "test/token_acc",
+        #     metrics.token_accuracy(prediction, target_w_end_token),
+        #     batch_size=target.batch_sizes[0],
+        # )
+        # self.log(
+        #     f"test/sequence_acc_{dataloader_idx}",
+        #     metrics.sequence_accuracy(prediction, target_w_end_token),
+        #     batch_size=target.batch_sizes[0],
+        # )
+        self.log_dict(
+            {
+                "test/loss": self._get_loss(prediction, target_w_end_token),
+                "test/token_acc": metrics.token_accuracy(
+                    prediction, target_w_end_token
+                ),
+                "test/sequence_acc": metrics.sequence_accuracy(
+                    prediction, target_w_end_token
+                ),
+            },
+            batch_size=prediction.batch_sizes[0],
         )
         return encoder_input, target
 
@@ -270,7 +282,7 @@ class PointerNetwork(pl.LightningModule):
         return {
             "optimizer": optimizer,
             "lr_scheduler": torch.optim.lr_scheduler.ExponentialLR(
-                optimizer, gamma=0.95
+                optimizer, gamma=0.96
             ),
         }
 
@@ -388,6 +400,7 @@ class PointerNetworkForConvexHull(PointerNetwork):
         self,
         test_step_outputs: tp.List[tp.Tuple[PackedSequence, PackedSequence]],
     ) -> None:
+        # TODO: handle multiple dataloaders, this handles only single dataloaders
         return
         all_point_sets, all_decoded, all_targets = (
             _cat_packed_sequences(items) for items in zip(*test_step_outputs)

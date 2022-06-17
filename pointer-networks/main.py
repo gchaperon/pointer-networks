@@ -78,6 +78,7 @@ def train_tsp(
     "--test-npoints",
     type=click.Choice(tp.get_args(ptrnets.ConvexHull.NPointsT)),
     required=True,
+    multiple=True,
 )
 @click.option("--learn-rate", default=0.001)
 @click.option("--hidden-size", default=256)
@@ -108,7 +109,11 @@ def train_convex_hull(
         "monitor": "val/sequence_acc",
         "mode": "max",
     }
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(**checkpoint_callback_kwargs)
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        filename="epoch={epoch}-val_sequence_acc={val/sequence_acc:.3f}",
+        auto_insert_metric_name=False,
+        **checkpoint_callback_kwargs,
+    )
     trainer = pl.Trainer(
         gpus=-1 if torch.cuda.is_available() else 0,
         logger=pl.loggers.TensorBoardLogger(
@@ -120,32 +125,20 @@ def train_convex_hull(
         callbacks=[
             pl.callbacks.LearningRateMonitor(),
             pl.callbacks.EarlyStopping(
-                **checkpoint_callback_kwargs,
                 patience=10,
+                **checkpoint_callback_kwargs,
             ),
             checkpoint_callback,
         ],
         max_epochs=200,
         deterministic=True,
     )
-    # trainer.fit(model, datamodule)
-    trainer.validate(
-        model,
-        datamodule,
-        ckpt_path=next(
-            pathlib.Path("r2_logs/convex-hull/version_0/checkpoints").iterdir()
-        ),
-    )
-    results = trainer.test(
+    trainer.fit(model, datamodule)
+    trainer.test(
         model,
         datamodule=datamodule,
-        # ckpt_path=checkpoint_callback.best_model_path,
-        ckpt_path=next(
-            pathlib.Path("r2_logs/convex-hull/version_0/checkpoints").iterdir()
-        ),
+        ckpt_path=checkpoint_callback.best_model_path,
     )
-    print(results)
-    return results
 
 
 @click.group()
