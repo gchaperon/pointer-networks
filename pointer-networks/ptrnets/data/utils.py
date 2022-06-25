@@ -3,10 +3,37 @@ import io
 import itertools
 import pathlib
 import typing as tp
+import tqdm
 import zipfile
 
 import numpy as np
+import numpy.ma as ma
 import numpy.typing as npt
+
+
+def load_file(
+    fname: pathlib.Path,
+) -> tp.Tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
+    point_sets = []
+    targets = []
+    with uopen(fname) as file:
+        for line in tqdm.tqdm(file, desc=f"Loading {fname}", unit="lines"):
+            point_set, target = parse_line(line)
+            point_sets.append(point_set)
+            targets.append(target)
+
+    def to_masked(array: npt.NDArray, max_len: int) -> npt.NDArray:
+        masked = ma.array(np.empty((max_len, *array.shape[1:]), dtype=array.dtype))
+        masked[: len(array)] = array
+        masked[len(array) :] = ma.masked
+        return masked
+
+    max_len_points = max(map(len, point_sets))
+    max_len_targets = max(map(len, targets))
+    return (
+        ma.stack([to_masked(arr, max_len_points) for arr in point_sets]),
+        ma.stack([to_masked(arr, max_len_targets) for arr in targets]),
+    )
 
 
 def parse_line(line: str) -> tp.Tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:

@@ -2,6 +2,8 @@ env/
 data/
 !data/.gitkeep
 logs/
+lightning_logs/
+relela-02-logs/
 __pycache__/
 *.swp
 

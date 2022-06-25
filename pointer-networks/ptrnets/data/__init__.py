@@ -1,3 +1,4 @@
+import joblib
 import typing as tp
 import pathlib
 import functools
@@ -8,7 +9,7 @@ import os
 import numpy as np
 import numpy.typing as npt
 
-from .utils import parse_line, uopen
+from .utils import parse_line, uopen, load_file
 
 
 _PtrNetItem = tp.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
@@ -197,8 +198,11 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
         ("500", "test"): "convex_hull_500_test.txt.zip",
     }
 
-    point_sets: tp.List[npt.NDArray[np.float32]]
-    targets: tp.List[npt.NDArray[np.int64]]
+    datadir: str
+    npoints: NPointsT
+    split: SplitT
+    point_sets: npt.NDArray[np.float32]
+    targets: npt.NDArray[np.int64]
 
     def __init__(self, datadir: str, npoints: NPointsT, split: SplitT) -> None:
         super().__init__()
@@ -213,15 +217,9 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
                 "Check the paper (or the data dir) for available combinations"
             )
 
-        with uopen(pathlib.Path(datadir) / fname) as file:
-            point_sets = []
-            targets = []
-            for line in tqdm.tqdm(file, desc=f"Loading {self}", unit="lines"):
-                point_set, target = parse_line(line)
-                point_sets.append(point_set)
-                targets.append(target)
-            self.point_sets = point_sets
-            self.targets = targets
+        self.point_sets, self.targets = joblib.Memory(datadir, verbose=5).cache(
+            load_file
+        )(pathlib.Path(datadir) / fname)
 
     def __repr__(self) -> str:
         return (
@@ -235,8 +233,8 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
         return len(self.point_sets)
 
     def __getitem__(self, key: int) -> _PtrNetItem:
-        points = torch.from_numpy(self.point_sets[key])
-        idx_sequence = torch.from_numpy(self.targets[key])
+        points = torch.from_numpy(self.point_sets[key].compressed().reshape(-1, 2))
+        idx_sequence = torch.from_numpy(self.targets[key].compressed())
         target_point_sequence = points[idx_sequence - 1]
         return points, target_point_sequence, idx_sequence
 
