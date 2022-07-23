@@ -14,16 +14,20 @@ import numpy.typing as npt
 def load_file(
     fname: pathlib.Path,
 ) -> tp.Tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
-    point_sets = []
-    targets = []
+    point_sets: tp.List[npt.NDArray[np.float32]] = []
+    targets: tp.List[npt.NDArray[np.int64]] = []
     with uopen(fname) as file:
         for line in tqdm.tqdm(file, desc=f"Loading {fname}", unit="lines"):
             point_set, target = parse_line(line)
             point_sets.append(point_set)
             targets.append(target)
 
-    def to_masked(array: npt.NDArray, max_len: int) -> npt.NDArray:
-        masked = ma.array(np.empty((max_len, *array.shape[1:]), dtype=array.dtype))
+    _DT = tp.TypeVar("_DT")
+
+    def to_masked(array: npt.NDArray[_DT], max_len: int) -> npt.NDArray[_DT]:
+        masked: npt.NDArray[_DT] = ma.array(
+            np.empty((max_len, *array.shape[1:]), dtype=array.dtype)
+        )
         masked[: len(array)] = array
         masked[len(array) :] = ma.masked
         return masked

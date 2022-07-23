@@ -134,11 +134,13 @@ def train_convex_hull(
         deterministic=True,
     )
     trainer.fit(model, datamodule)
-    trainer.test(
-        model,
-        datamodule=datamodule,
-        ckpt_path=checkpoint_callback.best_model_path,
-    )
+
+
+#     trainer.test(
+#         model,
+#         datamodule=datamodule,
+#         ckpt_path=checkpoint_callback.best_model_path,
+#     )
 
 
 @click.group()
