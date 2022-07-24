@@ -12,6 +12,39 @@ import ptrnets.metrics as metrics
 import dataclasses
 
 
+# Some utilities
+# =====================================================
+def _prepend(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
+    """Prepends a tensor to each sequence"""
+    padded, lens = nn.utils.rnn.pad_packed_sequence(sequences)
+    # repeat tensor batch_size times
+    # tensor shape should be the same shape as each token in a sequence
+    batch_size = padded.shape[1]
+    padded = torch.cat(
+        [tensor.repeat(1, batch_size, *[1] * (padded.ndim - 2)), padded], dim=0
+    )
+    return nn.utils.rnn.pack_padded_sequence(
+        padded, lengths=lens + 1, enforce_sorted=False
+    )
+
+
+def _cat_packed_sequences(packed_sequences: tp.List[PackedSequence]) -> PackedSequence:
+    """Concatenate packed sequences along batch dimention"""
+    max_sequence_len = max(len(packed.batch_sizes) for packed in packed_sequences)
+    padded, lens = zip(
+        *(
+            nn.utils.rnn.pad_packed_sequence(packed, total_length=max_sequence_len)
+            for packed in packed_sequences
+        )
+    )
+    concatenated = nn.utils.rnn.pack_padded_sequence(
+        torch.cat(padded, dim=1), torch.cat(lens), enforce_sorted=False
+    )
+    return concatenated
+
+
+# Model definition
+# =====================================================
 class Attention(nn.Module):
     def __init__(self, input_size: int) -> None:
         super().__init__()
@@ -46,7 +79,6 @@ class Attention(nn.Module):
         decoder_unpacked, decoder_lens = nn.utils.rnn.pad_packed_sequence(
             decoder_output
         )
-        # TODO: maybe mask padded positions, in dim max_enc_sec_len?
         # shape: (max_dec_seq_len, max_enc_sec_len, batch)
         scores = (
             self.activation(decoder_unpacked.unsqueeze(1) + encoder_unpacked) @ self.v
@@ -64,57 +96,7 @@ class Attention(nn.Module):
         )
 
 
-def _prepend(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
-    """Prepends a tensor to each sequence"""
-    padded, lens = nn.utils.rnn.pad_packed_sequence(sequences)
-    # repeat tensor batch_size times
-    # tensor shape should be the same shape as each token in a sequence
-    batch_size = padded.shape[1]
-    padded = torch.cat(
-        [tensor.repeat(1, batch_size, *[1] * (padded.ndim - 2)), padded], dim=0
-    )
-    return nn.utils.rnn.pack_padded_sequence(
-        padded, lengths=lens + 1, enforce_sorted=False
-    )
-
-
-def _append(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
-    """Appends a tensor to each sequence
-
-    This is trickier because elements should be inserted between the last token and the
-    padding section"""
-    padded, lens = nn.utils.rnn.pad_packed_sequence(
-        sequences, total_length=len(sequences.batch_sizes) + 1
-    )
-    batch_size = padded.shape[1]
-    padded[lens, torch.arange(batch_size)] = tensor.repeat(
-        batch_size, *[1] * (padded.ndim - 2)
-    )
-
-    return nn.utils.rnn.pack_padded_sequence(
-        padded, lengths=lens + 1, enforce_sorted=False
-    )
-
-
-def _cat_packed_sequences(packed_sequences: tp.List[PackedSequence]) -> PackedSequence:
-    """Concatenate packed sequences along batch dimention"""
-    max_sequence_len = max(len(packed.batch_sizes) for packed in packed_sequences)
-    padded, lens = zip(
-        *(
-            nn.utils.rnn.pad_packed_sequence(packed, total_length=max_sequence_len)
-            for packed in packed_sequences
-        )
-    )
-    concatenated = nn.utils.rnn.pack_padded_sequence(
-        torch.cat(padded, dim=1), torch.cat(lens), enforce_sorted=False
-    )
-    return concatenated
-
-
 class PointerNetwork(pl.LightningModule):
-
-    END_SYMBOL_INDEX = 0
-
     def __init__(
         self,
         input_size: int,
@@ -134,7 +116,8 @@ class PointerNetwork(pl.LightningModule):
         self.end_symbol = nn.Parameter(torch.empty(hidden_size))
         # learn initial cell state
         self.encoder_c_0 = nn.Parameter(torch.empty(hidden_size))
-        # modules
+        # Modules
+        # ======================================================
         self.encoder = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -148,10 +131,10 @@ class PointerNetwork(pl.LightningModule):
             bidirectional=False,
         )
         self.attention = Attention(input_size=hidden_size)
-
         self.reset_parameters()
 
-        # metrics
+        # Metrics
+        # ======================================================
         self.test_tf_token_accuracy = metrics.TokenAccuracy()
         self.test_tf_sequence_accuracy = metrics.SequenceAccuracy()
 
@@ -191,15 +174,16 @@ class PointerNetwork(pl.LightningModule):
     def training_step(self, batch: ptrnets.data._Batch, batch_idx: int) -> torch.Tensor:
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
-        # TODO: maybe append end symbol index inside dataset __getitem__
-        # instead of here?
-        target = _append(
-            target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
-        )
         loss = self._get_loss(prediction, target)
-        self.log("train/loss", loss.detach())
-        self.log("train/token_acc", metrics.token_accuracy(prediction, target))
-        self.log("train/sequence_acc", metrics.sequence_accuracy(prediction, target))
+
+        self.log_dict(
+            {
+                "train/loss": loss,
+                "train/token_acc": metrics.token_accuracy(prediction, target),
+                "train/sequence_acc": metrics.sequence_accuracy(prediction, target),
+            },
+            batch_size=target.batch_sizes[0],
+        )
         return loss
 
     def _get_loss(
@@ -211,24 +195,14 @@ class PointerNetwork(pl.LightningModule):
         self, batch: ptrnets.data._Batch, batch_idx: int
     ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         encoder_input, decoder_input, target = batch
-        # TODO: same as previous todo
-        target = _append(
-            target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
-        )
         prediction = self(encoder_input, decoder_input)
-        self.log(
-            "val/loss",
-            self._get_loss(prediction, target),
-            batch_size=target.batch_sizes[0],
-        )
-        self.log(
-            "val/token_acc",
-            metrics.token_accuracy(prediction, target),
-            batch_size=target.batch_sizes[0],
-        )
-        self.log(
-            "val/sequence_acc",
-            metrics.sequence_accuracy(prediction, target),
+
+        self.log_dict(
+            {
+                "val/loss": self._get_loss(prediction, target),
+                "val/token_acc": metrics.token_accuracy(prediction, target),
+                "val/sequence_acc": metrics.sequence_accuracy(prediction, target),
+            },
             batch_size=target.batch_sizes[0],
         )
 
@@ -239,9 +213,6 @@ class PointerNetwork(pl.LightningModule):
         for test_epoch_end to do the decoding. Test epoch end will take quite
         some time."""
         encoder_input, decoder_input, target = batch
-        target = _append(
-            target, torch.tensor(self.END_SYMBOL_INDEX, device=target.data.device)
-        )
         prediction = self(encoder_input, decoder_input)
 
         batch_size = target.batch_sizes[0]
@@ -416,11 +387,7 @@ class PointerNetworkForConvexHull(PointerNetwork):
                 # when indices is a valid polygon, mask everything except first value so
                 # that no previous point can be decoded, except for the first one which
                 # means closing the polygon.
-                mask = (
-                    [self.END_SYMBOL_INDEX, *beam.indices]
-                    if len(beam.indices) < 3
-                    else beam.indices[1:]
-                )
+                mask = [0, *beam.indices] if len(beam.indices) < 3 else beam.indices[1:]
                 attention_scores[
                     torch.tensor(mask, device=attention_scores.device)
                 ] = float("-inf")

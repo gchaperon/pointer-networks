@@ -236,7 +236,11 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
         points = torch.from_numpy(self.point_sets[key].compressed().reshape(-1, 2))
         idx_sequence = torch.from_numpy(self.targets[key].compressed())
         target_point_sequence = points[idx_sequence - 1]
-        return points, target_point_sequence, idx_sequence
+        return (
+            points,
+            target_point_sequence,
+            torch.hstack([idx_sequence, torch.tensor(0)]),
+        )
 
 
 class ConvexHullDataModule(pl.LightningDataModule):

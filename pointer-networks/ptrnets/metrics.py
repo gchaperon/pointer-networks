@@ -60,7 +60,7 @@ class TokenAccuracy(torchmetrics.Metric):
 
     def compute(self) -> torch.Tensor:
         if self.correct == 0:
-            return torch.tensor(0.)
+            return torch.tensor(0.0)
         return self.correct / self.total  # type:ignore[operator]
 
 
@@ -90,7 +90,7 @@ class SequenceAccuracy(torchmetrics.Metric):
 
     def compute(self) -> torch.Tensor:
         if self.correct == 0:
-            return torch.tensor(0.)
+            return torch.tensor(0.0)
         return self.correct / self.total  # type:ignore[operator]
 
 
@@ -164,7 +164,7 @@ def sequence_accuracy(
     prediction_padded, _ = pad(prediction)
     target_padded, _ = pad(target)
     correct: torch.Tensor = (prediction_padded.argmax(2) == target_padded).all(dim=0)
-    return correct.sum(), len(correct)
+    return correct.sum() / len(correct)
 
 
 def polygon_accuracy(
