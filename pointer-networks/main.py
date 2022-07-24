@@ -106,7 +106,7 @@ def train_convex_hull(
     )
 
     checkpoint_callback_kwargs = {
-        "monitor": "val/sequence_acc",
+        "monitor": "val/sequence_accuracy",
         "mode": "max",
     }
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
@@ -132,6 +132,8 @@ def train_convex_hull(
         ],
         max_epochs=200,
         deterministic=True,
+        limit_train_batches=200,
+        limit_val_batches=20,
     )
     trainer.fit(model, datamodule)
 

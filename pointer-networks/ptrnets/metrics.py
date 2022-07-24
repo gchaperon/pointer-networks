@@ -30,6 +30,7 @@ def _multiarange(counts: torch.Tensor) -> torch.Tensor:
     return out
 
 
+# snake case because is the name logged by tensorboard
 class TokenAccuracy(torchmetrics.Metric):
     higher_is_better = True
 
@@ -40,7 +41,7 @@ class TokenAccuracy(torchmetrics.Metric):
 
     def update(self, prediction: PackedSequence, target: PackedSequence) -> None:
         if prediction.data.ndim == 2:
-            prediction._replace(data=prediction.data.argmax(1))
+            prediction = prediction._replace(data=prediction.data.argmax(1))
         # prediction and target should be padded to the same length so the shapes match
         pad_length = max(len(prediction.batch_sizes), len(target.batch_sizes))
         prediction_padded, prediction_lens = torch.nn.utils.rnn.pad_packed_sequence(
@@ -64,6 +65,7 @@ class TokenAccuracy(torchmetrics.Metric):
         return self.correct / self.total  # type:ignore[operator]
 
 
+# snake case, same as above
 class SequenceAccuracy(torchmetrics.Metric):
     higher_is_better = True
 
@@ -74,7 +76,7 @@ class SequenceAccuracy(torchmetrics.Metric):
 
     def update(self, prediction: PackedSequence, target: PackedSequence) -> None:
         if prediction.data.ndim == 2:
-            prediction._replace(data=prediction.data.argmax(1))
+            prediction = prediction._replace(data=prediction.data.argmax(1))
         # prediction and target should be padded to the same length so the shapes match
         pad_length = max(len(prediction.batch_sizes), len(target.batch_sizes))
         prediction_padded, prediction_lens = torch.nn.utils.rnn.pad_packed_sequence(
@@ -144,27 +146,6 @@ def _(points: PackedSequence, indices: PackedSequence) -> torch.Tensor:
 def random_solve(n_points: int) -> tp.List[int]:
     return [1, *random.sample(range(2, n_points + 1), n_points - 1), 1]
 
-
-def token_accuracy(
-    prediction: PackedSequence,
-    target: PackedSequence,
-) -> torch.Tensor:
-    # prediction shape: (L, B, C)
-    # target shape: (L, B)
-    correct: torch.Tensor = prediction.data.argmax(1) == target.data
-    return correct.sum() / len(correct)
-
-
-def sequence_accuracy(
-    prediction: PackedSequence, target: PackedSequence
-) -> torch.Tensor:
-    # prediction shape: (L, B, C)
-    # target shape: (L, B)
-    pad = torch.nn.utils.rnn.pad_packed_sequence
-    prediction_padded, _ = pad(prediction)
-    target_padded, _ = pad(target)
-    correct: torch.Tensor = (prediction_padded.argmax(2) == target_padded).all(dim=0)
-    return correct.sum() / len(correct)
 
 
 def polygon_accuracy(

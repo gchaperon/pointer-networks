@@ -8,6 +8,7 @@ import ptrnets
 import functools
 import operator
 import typing as tp
+import torchmetrics
 import ptrnets.metrics as metrics
 import dataclasses
 
@@ -135,13 +136,19 @@ class PointerNetwork(pl.LightningModule):
 
         # Metrics
         # ======================================================
-        self.test_tf_token_accuracy = metrics.TokenAccuracy()
-        self.test_tf_sequence_accuracy = metrics.SequenceAccuracy()
+        metric_collection = torchmetrics.MetricCollection(
+            {
+                "token_accuracy": metrics.TokenAccuracy(),
+                "sequence_accuracy": metrics.SequenceAccuracy(),
+            }
+        )
+        # train
+        self.train_metrics = metric_collection.clone(prefix="train/")
+        self.val_metrics = metric_collection.clone(prefix="val/")
 
-        self.test_greedy_decoded_token_accuracy = metrics.TokenAccuracy()
-        self.test_greedy_decoded_sequence_accuracy = metrics.SequenceAccuracy()
-        self.test_beam_search_token_accuracy = metrics.TokenAccuracy()
-        self.test_beam_search_sequence_accuracy = metrics.SequenceAccuracy()
+        self.test_tf_metrics = metric_collection.clone(prefix="test/tf_")
+        self.test_greedy_metrics = metric_collection.clone(prefix="test/greedy_")
+        self.test_beam_metrics = metric_collection.clone(prefix="test/beam_")
 
     def reset_parameters(self) -> None:
         for param in self.parameters():
@@ -179,8 +186,7 @@ class PointerNetwork(pl.LightningModule):
         self.log_dict(
             {
                 "train/loss": loss,
-                "train/token_acc": metrics.token_accuracy(prediction, target),
-                "train/sequence_acc": metrics.sequence_accuracy(prediction, target),
+                **self.train_metrics(prediction, target),
             },
             batch_size=target.batch_sizes[0],
         )
@@ -200,8 +206,7 @@ class PointerNetwork(pl.LightningModule):
         self.log_dict(
             {
                 "val/loss": self._get_loss(prediction, target),
-                "val/token_acc": metrics.token_accuracy(prediction, target),
-                "val/sequence_acc": metrics.sequence_accuracy(prediction, target),
+                **self.val_metrics(prediction, target),
             },
             batch_size=target.batch_sizes[0],
         )
@@ -215,38 +220,17 @@ class PointerNetwork(pl.LightningModule):
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
 
-        batch_size = target.batch_sizes[0]
         greedy_decoded = self.batch_greedy_decode(encoder_input)
         beam_decoded = self.single_beam_search(encoder_input)
         self.log_dict(
             {
-                "test/tf_token_acc": self.test_tf_token_accuracy(
-                    prediction._replace(data=prediction.data.argmax(1)), target
-                ),
-                "test/tf_sequence_acc": self.test_tf_sequence_accuracy(
-                    prediction._replace(data=prediction.data.argmax(1)), target
-                ),
-                "test/greedy_token_acc": self.test_greedy_decoded_token_accuracy(
-                    greedy_decoded, target
-                ),
-                "test/greedy_sequence_acc": self.test_greedy_decoded_sequence_accuracy(
-                    greedy_decoded, target
-                ),
-                "test/beam_token_acc": self.test_beam_search_token_accuracy(
-                    beam_decoded, target
-                ),
-                "test/beam_sequence_acc": self.test_beam_search_sequence_accuracy(
-                    beam_decoded, target
-                ),
+                **self.test_tf_metrics(prediction, target),
+                **self.test_greedy_metrics(greedy_decoded, target),
+                **self.test_beam_metrics(beam_decoded, target),
             },
-            batch_size=batch_size,
+            batch_size=target.batch_sizes[0],
         )
 
-        # return (
-        #     greedy_decoded,
-        #     prediction,
-        #     target,
-        # )
 
     def _test_epoch_end(self, test_step_outputs):
         all_greedy_decoded, all_prediction, all_targets = (
