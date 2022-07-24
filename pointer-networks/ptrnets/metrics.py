@@ -1,15 +1,9 @@
-# TODO: maybe rename to metrics.py?
-import math
-import random
-import typing as tp
 import functools
 import torch
 from torch.nn.utils.rnn import PackedSequence
 
 import torchmetrics
 import shapely.geometry
-
-_Point = tp.Tuple[float, float]
 
 
 def _multiarange(counts: torch.Tensor) -> torch.Tensor:
@@ -30,7 +24,6 @@ def _multiarange(counts: torch.Tensor) -> torch.Tensor:
     return out
 
 
-# snake case because is the name logged by tensorboard
 class TokenAccuracy(torchmetrics.Metric):
     higher_is_better = True
 
@@ -65,7 +58,6 @@ class TokenAccuracy(torchmetrics.Metric):
         return self.correct / self.total  # type:ignore[operator]
 
 
-# snake case, same as above
 class SequenceAccuracy(torchmetrics.Metric):
     higher_is_better = True
 
@@ -94,58 +86,6 @@ class SequenceAccuracy(torchmetrics.Metric):
         if self.correct == 0:
             return torch.tensor(0.0)
         return self.correct / self.total  # type:ignore[operator]
-
-
-def distance(pt1: _Point, pt2: _Point) -> float:
-    return math.sqrt((pt2[0] - pt1[0]) ** 2 + (pt2[1] - pt1[1]) ** 2)
-
-
-@functools.singledispatch
-def tour_distance(points, indices):
-    raise NotImplementedError(
-        f"Not implemented for arg `points` of type {type(points)}"
-    )
-
-
-@tour_distance.register(list)
-def _(points: tp.List[_Point], indices: tp.List[int]) -> float:
-    dist = 0.0
-    # NOTE: indices are 1-indexed
-    indices = [i - 1 for i in indices]
-    for current, next in zip(indices[:-1], indices[1:]):
-        dist += distance(points[current], points[next])
-    return dist
-
-
-@tour_distance.register
-def _(points: torch.Tensor, indices: torch.Tensor) -> torch.Tensor:
-    """Computes batched tour distance.
-    points should have dims (tour_len, batch, 2)
-    indices should have dims (tour_len + 1, batch)
-    """
-    batch_arange = torch.arange(points.shape[1], device=points.device)
-    # NOTE: indices are 1-indexed
-    curr = points[indices[:-1] - 1, batch_arange]
-    next_ = points[indices[1:] - 1, batch_arange]
-    return torch.sum(torch.sqrt(torch.sum((next_ - curr) ** 2, dim=2)), dim=0)
-
-
-@tour_distance.register
-def _(points: PackedSequence, indices: PackedSequence) -> torch.Tensor:
-    points_unpacked, point_sets_lens = torch.nn.utils.rnn.pad_packed_sequence(points)
-    # pad with ones so the last point gets repeated when selecting
-    indices_unpacked, indices_lens = torch.nn.utils.rnn.pad_packed_sequence(
-        indices, padding_value=1
-    )
-    batch_arange = torch.arange(points_unpacked.shape[1], device=points_unpacked.device)
-    curr = points_unpacked[indices_unpacked[:-1] - 1, batch_arange]
-    next_ = points_unpacked[indices_unpacked[1:] - 1, batch_arange]
-    return torch.sum(torch.sqrt(torch.sum((next_ - curr) ** 2, dim=2)), dim=0)
-
-
-def random_solve(n_points: int) -> tp.List[int]:
-    return [1, *random.sample(range(2, n_points + 1), n_points - 1), 1]
-
 
 
 def polygon_accuracy(
