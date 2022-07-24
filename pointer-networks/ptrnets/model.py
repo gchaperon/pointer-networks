@@ -303,7 +303,7 @@ class PointerNetworkForConvexHull(PointerNetwork):
 
     @torch.no_grad()
     def single_beam_search(
-        self, inputs: PackedSequence, nbeams: int = 5
+        self, inputs: PackedSequence, nbeams: int = 3
     ) -> PackedSequence:
         """Performs beam search with a single sequence. Beams are processed in
         parallel."""
@@ -329,21 +329,43 @@ class PointerNetworkForConvexHull(PointerNetwork):
 
         decoder_input = self.start_symbol.repeat(1, nbeams, 1)
 
-        beams = torch.empty(0, nbeams, device=device)
+        beams = torch.empty(0, nbeams, dtype=int, device=device)
         beam_scores = torch.tensor([0.0, *[torch.inf] * (nbeams - 1)], device=device)
 
-        for _ in range(max_len):
+        for i in range(max_len):
             _, last_hidden = self.decoder(decoder_input, last_hidden)
             # for each beam, next token scores
             # (nbeams, max_input_len + 1)
             logits = nn.utils.rnn.pad_packed_sequence(
                 self.attention(encoder_output, last_hidden[0])
             )[0].squeeze(0)
-            finished_mask = (beams == 0).any(0)
-            logits[finished_mask, 1:] = -torch.inf
+            # There are some conditions that a sequence must satisfy
+            # * first three tokens must be different and nonzero, else the
+            #   sequence is not a polygon
+            # * tokens in a sequence must be unique, except for the first one
+            #   which is used to close the polygon
+            # * the token 0 can only be produced after the polygon has been
+            #   closed
+            # * once a 0 has been produced, i.e. the beam is finished, only
+            #   zeros can be predicted with the highest probability
+            #
+            # For this function I will only enforce the first condition, the
+            # fact that no intermediate point can be repeated and the fact that
+            # finished beams predict only zero.  I will let the net predictt 0
+            # at any point, i.e. the net can predict "open" sequences, that
+            # will be closed implicitly by the function computing polygon
+            # metrics.
+            if i < 3:
+                logits[:, 0] = -torch.inf
+                logits[torch.arange(nbeams), beams] = -torch.inf
+            else:
+                finished_mask = torch.any(beams == 0, dim=0)
+                logits[finished_mask, 1:] = -torch.inf
+                logits[~finished_mask, beams[1:, ~finished_mask]] = -torch.inf
+
             probs = logits.softmax(1)
-            # replace -inf supe negative value, but not -inf
             temp_scores = torch.log(probs)
+            # replace -inf with super negative value, but not -inf
             temp_scores[temp_scores == -torch.inf] = torch.finfo().min
             new_beam_scores = beam_scores[:, None] - temp_scores
             topk_scores, indices = torch.topk(
