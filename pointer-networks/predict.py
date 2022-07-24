@@ -31,7 +31,9 @@ def main(experiment_dir, test_npoints, batch_size):
     model = ptrnets.PointerNetworkForConvexHull.load_from_checkpoint(ckpt_path)
     datamodule = ptrnets.ConvexHullDataModule("data", "50", test_npoints, batch_size)
     trainer = pl.Trainer(
-        gpus=-1 if torch.cuda.is_available() else 0, deterministic=True
+        gpus=-1 if torch.cuda.is_available() else 0,
+        deterministic=True,
+        limit_test_batches=100,
     )
     # trainer = pl.Trainer()
     trainer.test(model, datamodule)

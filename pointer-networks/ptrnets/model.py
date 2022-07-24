@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn.utils.rnn import PackedSequence
@@ -27,9 +28,9 @@ class Attention(nn.Module):
     ) -> PackedSequence:
         # treat everything as PackedSequence
         if isinstance(encoder_output, torch.Tensor):
-            encoder_output = nn.utils.rnn.pack_sequence(list(encoder_output.unbind(1)))
+            encoder_output = nn.utils.rnn.pack_sequence(encoder_output.unbind(1))
         if isinstance(decoder_output, torch.Tensor):
-            decoder_output = nn.utils.rnn.pack_sequence(list(decoder_output.unbind(1)))
+            decoder_output = nn.utils.rnn.pack_sequence(decoder_output.unbind(1))
 
         assert (
             encoder_output.batch_sizes[0] == decoder_output.batch_sizes[0]
@@ -154,8 +155,10 @@ class PointerNetwork(pl.LightningModule):
         self.test_tf_token_accuracy = metrics.TokenAccuracy()
         self.test_tf_sequence_accuracy = metrics.SequenceAccuracy()
 
-        self.test_decoded_token_accuracy = metrics.TokenAccuracy()
-        self.test_decoded_sequence_accuracy = metrics.SequenceAccuracy()
+        self.test_greedy_decoded_token_accuracy = metrics.TokenAccuracy()
+        self.test_greedy_decoded_sequence_accuracy = metrics.SequenceAccuracy()
+        self.test_beam_search_token_accuracy = metrics.TokenAccuracy()
+        self.test_beam_search_sequence_accuracy = metrics.SequenceAccuracy()
 
     def reset_parameters(self) -> None:
         for param in self.parameters():
@@ -169,7 +172,6 @@ class PointerNetwork(pl.LightningModule):
             _prepend(decoder_input, self.start_symbol), encoder_last_state
         )
         scores: PackedSequence = self.attention(encoder_output, decoder_output)
-        # breakpoint()
         return scores
 
     def _encoder_forward(
@@ -244,6 +246,7 @@ class PointerNetwork(pl.LightningModule):
 
         batch_size = target.batch_sizes[0]
         greedy_decoded = self.batch_greedy_decode(encoder_input)
+        beam_decoded = self.single_beam_search(encoder_input)
         self.log_dict(
             {
                 "test/tf_token_acc": self.test_tf_token_accuracy(
@@ -252,11 +255,17 @@ class PointerNetwork(pl.LightningModule):
                 "test/tf_sequence_acc": self.test_tf_sequence_accuracy(
                     prediction._replace(data=prediction.data.argmax(1)), target
                 ),
-                "test/dcod_token_acc": self.test_decoded_token_accuracy(
+                "test/greedy_token_acc": self.test_greedy_decoded_token_accuracy(
                     greedy_decoded, target
                 ),
-                "test/dcod_sequence_acc": self.test_decoded_sequence_accuracy(
+                "test/greedy_sequence_acc": self.test_greedy_decoded_sequence_accuracy(
                     greedy_decoded, target
+                ),
+                "test/beam_token_acc": self.test_beam_search_token_accuracy(
+                    beam_decoded, target
+                ),
+                "test/beam_sequence_acc": self.test_beam_search_sequence_accuracy(
+                    beam_decoded, target
                 ),
             },
             batch_size=batch_size,
@@ -282,7 +291,6 @@ class PointerNetwork(pl.LightningModule):
         all_prediction = pad(all_prediction)[0]
         all_targets = pad(all_targets)[0]
 
-        breakpoint()
         pass
 
     def _test_step_old(
@@ -341,6 +349,16 @@ class _Beam:
         has_looped = len(self.indices) > 1 and self.indices[0] == self.indices[-1]
         is_too_long = len(self.indices) > self.maxlen if self.maxlen else False
         return ends_with_zero or has_looped or is_too_long
+
+
+def _unravel_index(
+    indices: torch.Tensor, shape: tp.Tuple[int, ...]
+) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+    # Supper innefficient to copy to cpu and then back to cuda if indices
+    # is a cuda tensor, but for now it suffices.
+    device = indices.device
+    unraveled_coords = np.unravel_index(indices.cpu().numpy(), shape)
+    return tuple(torch.tensor(arr, device=device) for arr in unraveled_coords)
 
 
 class PointerNetworkForConvexHull(PointerNetwork):
@@ -447,7 +465,6 @@ class PointerNetworkForConvexHull(PointerNetwork):
 
         predictions = []
 
-        # breakpoint()
         for _ in range(max_len):
             _, last_hidden = self.decoder(decoder_input, last_hidden)
 
@@ -477,30 +494,81 @@ class PointerNetworkForConvexHull(PointerNetwork):
         )
 
     @torch.no_grad()
-    def single_beam_search(self, inputs: PackedSequence, nbeams:int = 3) -> PackedSequence:
+    def single_beam_search(
+        self, inputs: PackedSequence, nbeams: int = 5
+    ) -> PackedSequence:
         """Performs beam search with a single sequence. Beams are processed in
         parallel."""
+
         # +2 because solution has to loop and then add 0
+        device = inputs.data.device
         max_len = len(inputs.batch_sizes) + 2
         batch_size = inputs.batch_sizes[0]
 
         assert batch_size == 1
+        # repeat inputs for each beam
+        input_padded, input_lens = nn.utils.rnn.pad_packed_sequence(inputs)
+        inputs = nn.utils.rnn.pack_padded_sequence(
+            input_padded.repeat(1, nbeams, 1),
+            input_lens.repeat(nbeams),
+            enforce_sorted=False,
+        )
+
+        # state that should be update after each recurrent step
+        # last_hidden
+        # decoder_input
         encoder_output, last_hidden = self._encoder_forward(inputs)
 
         decoder_input = self.start_symbol.repeat(1, nbeams, 1)
 
-        beams = torch.empty(0, nbeams)
-        beams_scores = torch.tensor([0.0, *[torch.inf] * (nbeams - 1)])
+        beams = torch.empty(0, nbeams, device=device)
+        beam_scores = torch.tensor([0.0, *[torch.inf] * (nbeams - 1)], device=device)
 
         for _ in range(max_len):
-            pass
+            _, last_hidden = self.decoder(decoder_input, last_hidden)
+            # for each beam, next token scores
+            # (nbeams, max_input_len + 1)
+            logits = nn.utils.rnn.pad_packed_sequence(
+                self.attention(encoder_output, last_hidden[0])
+            )[0].squeeze(0)
+            finished_mask = (beams == 0).any(0)
+            logits[finished_mask, 1:] = -torch.inf
+            probs = logits.softmax(1)
+            # replace -inf supe negative value, but not -inf
+            temp_scores = torch.log(probs)
+            temp_scores[temp_scores == -torch.inf] = torch.finfo().min
+            new_beam_scores = beam_scores[:, None] - temp_scores
+            topk_scores, indices = torch.topk(
+                new_beam_scores.view(-1), k=nbeams, largest=False
+            )
+            beams_index, index_prediction = _unravel_index(
+                indices, shape=new_beam_scores.shape
+            )
 
+            beams = torch.vstack(
+                [
+                    beams[:, beams_index],
+                    index_prediction,
+                ]
+            )
+            beam_scores = topk_scores
 
+            # update recurrent state
+            # choose the last hidden from the correct beams
+            last_hidden = tuple(t[:, beams_index] for t in last_hidden)
+            assert torch.all(
+                index_prediction.cpu() < input_lens + 1
+            )  # input_lens is always on cpu
+            decoder_input = input_padded[index_prediction - 1].transpose(0, 1)
+            if torch.all(torch.any(beams == 0, dim=0)):
+                break
+        else:
+            # if no break occurs, add last 0 to al predictions
+            beams = torch.vstack([beams, torch.zeros(nbeams, dtype=int, device=device)])
 
-
-
-
-
+        assert beam_scores.argmin() == 0
+        winner = beams[:, 0:1]  # since topk is sorted winner is always first beam
+        return nn.utils.rnn.pack_sequence(winner[: winner.argmin() + 1].unbind(1))
 
 
 class PointerNetworkForTSP(PointerNetwork):

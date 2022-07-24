@@ -60,7 +60,7 @@ class TokenAccuracy(torchmetrics.Metric):
 
     def compute(self) -> torch.Tensor:
         if self.correct == 0:
-            return torch.tensor(0)
+            return torch.tensor(0.)
         return self.correct / self.total  # type:ignore[operator]
 
 
@@ -90,7 +90,7 @@ class SequenceAccuracy(torchmetrics.Metric):
 
     def compute(self) -> torch.Tensor:
         if self.correct == 0:
-            return torch.tensor(0)
+            return torch.tensor(0.)
         return self.correct / self.total  # type:ignore[operator]
 
 
