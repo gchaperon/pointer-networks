@@ -1,12 +1,8 @@
-import tqdm
-import itertools
-import os
 import torch
 import pytorch_lightning as pl
 import pathlib
 import typing as tp
 import ptrnets
-import ptrnets.metrics as metrics
 import click
 
 
@@ -19,13 +15,7 @@ import click
     multiple=True,
 )
 @click.option("--batch-size", default=128)
-def main(experiment_dir, test_npoints, batch_size) -> None:
-    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-    torch.use_deterministic_algorithms(True)
-    torch.use_deterministic_algorithms(True)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    pl.seed_everything(42, workers=True)
+def main(experiment_dir: str, test_npoints: str, batch_size: int) -> None:
 
     print(experiment_dir, test_npoints, batch_size)
     ckpt_path = str(next((pathlib.Path(experiment_dir) / "checkpoints").iterdir()))
@@ -34,8 +24,6 @@ def main(experiment_dir, test_npoints, batch_size) -> None:
     datamodule = ptrnets.ConvexHullDataModule("data", "50", test_npoints, batch_size)
     trainer = pl.Trainer(
         gpus=-1 if torch.cuda.is_available() else 0,
-        deterministic=True,
-        limit_test_batches=100 // batch_size,
     )
 
     trainer.test(model, datamodule)
