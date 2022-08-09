@@ -363,9 +363,13 @@ class PointerNetworkForConvexHull(PointerNetwork):
             # will be closed implicitly by the function computing polygon
             # metrics.
             if i < 3:
+                # shouldn't predict neither 0 nor the already seen values
                 logits[:, 0] = -torch.inf
                 logits[torch.arange(nbeams), beams] = -torch.inf
             else:
+                # finished should only predict 0, unfinished should only
+                # predict new values or the first that was predicted in the
+                # beam
                 finished_mask = torch.any(beams == 0, dim=0)
                 logits[finished_mask, 1:] = -torch.inf
                 logits[~finished_mask, beams[1:, ~finished_mask]] = -torch.inf
@@ -406,13 +410,12 @@ class PointerNetworkForConvexHull(PointerNetwork):
     def batch_beam_search(
         self, encoder_input: PackedSequence, nbeams: int = 3
     ) -> PackedSequence:
-        # breakpoint()
-        pad = nn.utils.rnn.pad_packed_sequence
-        import numpy as np
+        """Decodes a sequence batch using `nbeams` beams. All elements of the
+        batch and beams of each sequence are decoded in parallel"""
 
-        device = self.device
+        # +2 because solution has to loop and then add 0
         max_len = len(encoder_input.batch_sizes) + 2
-        batch_size = encoder_input.batch_sizes[0].item()
+        batch_size: int = encoder_input.batch_sizes[0].item()
 
         # repeat inputs
         input_padded, input_lens = nn.utils.rnn.pad_packed_sequence(encoder_input)
@@ -422,59 +425,100 @@ class PointerNetworkForConvexHull(PointerNetwork):
             input_padded, input_lens, enforce_sorted=False
         )
 
+        # initial state
         encoder_output, last_hidden = self._encoder_forward(encoder_input)
         decoder_input = self.start_symbol.repeat(1, batch_size * nbeams, 1)
-
-        beams = torch.empty(0, batch_size * nbeams, dtype=int, device=device)
+        beams = torch.empty(0, batch_size * nbeams, dtype=int, device=self.device)
         beam_scores = torch.tensor(
-            [0.0, *[torch.inf] * (nbeams - 1)] * batch_size, device=device
+            [0.0, *[torch.inf] * (nbeams - 1)] * batch_size, device=self.device
         )
 
-        for _ in range(max_len):
+        for i in range(max_len):
             _, last_hidden = self.decoder(decoder_input, last_hidden)
             logits = nn.utils.rnn.pad_packed_sequence(
                 self.attention(encoder_output, last_hidden[0])
             )[0].squeeze(0)
+            # There are some conditions that a sequence must satisfy
+            # * the first three tokens must be different and nonzero, else the
+            #   sequence is not a polygon
+            # * tokens in a sequence must be unique, except for the first one
+            #   which is used to close the polygon
+            # * the token 0 can only be produced after the polygon has been
+            #   closed
+            # * once a 0 has been produced, i.e. the beam is finished, only
+            #   zeros can be predicted with the highest probability
+            #
+            # For this function I will only enforce the first condition, the
+            # fact that no intermediate point can be repeated and the fact that
+            # finished beams predict only zero.  I will let the net predictt 0
+            # at any point, i.e. the net can predict "open" sequences, that
+            # will be closed implicitly by the function computing polygon
+            # metrics.
+            if i < 3:
+                # shouldn't predict neither 0 nor the already seen values
+                logits[:, 0] = -torch.inf
+                logits[torch.arange(batch_size * nbeams), beams] = -torch.inf
+            else:
+                # finished should only predict 0, unfinished should only
+                # predict new values or the first that was predicted in the
+                # beam
+                finished_mask = torch.any(beams == 0, dim=0)
+                logits[finished_mask, 1:] = -torch.inf
+                logits[~finished_mask, beams[1:, ~finished_mask]] = -torch.inf
+
             probs = logits.softmax(1)
             temp_scores = torch.log(probs)
             # replace -inf with super negative value, but not -inf
             temp_scores[temp_scores == -torch.inf] = torch.finfo().min
             new_beam_scores = beam_scores[:, None] - temp_scores
             topk_scores, indices = torch.topk(
-                new_beam_scores.view(batch_size, -1), k=nbeams, largest=False
+                new_beam_scores.view(batch_size, -1),
+                k=nbeams,
+                largest=False,
+                sorted=True,
             )
-            # both of shape (batch_size, nbeams)
+            # now both of shape (batch_size, nbeams)
             beams_index, index_prediction = _unravel_index(
                 indices, shape=(nbeams, new_beam_scores.shape[1])
             )
 
             # flatten beams_index and index_prediction
             beams_index = beams_index.view(-1) + (
-                torch.arange(batch_size, device=device) * nbeams
+                torch.arange(batch_size, device=self.device) * nbeams
             )[:, None].repeat(1, nbeams).view(-1)
             index_prediction = index_prediction.view(-1)
             beams = torch.vstack([beams[:, beams_index], index_prediction])
             beam_scores = topk_scores.view(-1)
 
+            # update recurrent state
+            # choose the last hidden from the correct beams
+            last_hidden = tuple(t[:, beams_index] for t in last_hidden)
             assert torch.all(
                 index_prediction.cpu() < input_lens + 1
             ), "some predictions are out of bounds"
             decoder_input = input_padded[
                 None, index_prediction - 1, torch.arange(batch_size * nbeams)
             ]
+            # if all finished, stop decoding
             if torch.all(torch.any(beams == 0, dim=0)):
                 break
         else:
+            # if no break occurs, add last 0 to al predictions
             beams = torch.vstack(
                 [beams, torch.zeros(batch_size, nbeams).type_as(beams)]
             )
 
-        # reshape beam_scores ans beams to (batch_size, nbeams)
+        # reshape beam_scores and beams to (batch_size, nbeams)
         beam_scores = beam_scores.view(batch_size, nbeams)
         beams = beams.view(-1, batch_size, nbeams)
 
-        assert torch.all(beam_scores.argmin(dim=1) == 0)
+        assert torch.all(beam_scores.argmin(dim=1) == 0), (
+            "all best beam scores should be in possition 0, since topk"
+            " is sorted by default, but they weren't :-/"
+        )
         winners = beams[..., 0]
         return nn.utils.rnn.pack_padded_sequence(
             winners, lengths=winners.argmin(dim=0).cpu() + 1, enforce_sorted=False
         )
+
+    decode = batch_beam_search
