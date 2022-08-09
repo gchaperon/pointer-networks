@@ -1,7 +1,7 @@
 env/
 data/
 !data/.gitkeep
-logs/
+/*logs*/
 lightning_logs/
 relela-02-logs/
 __pycache__/

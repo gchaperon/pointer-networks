@@ -5,12 +5,9 @@ from torch.nn.utils.rnn import PackedSequence
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import ptrnets
-import functools
-import operator
 import typing as tp
 import torchmetrics
 import ptrnets.metrics as metrics
-import dataclasses
 
 
 # Some utilities
@@ -152,12 +149,14 @@ class PointerNetwork(pl.LightningModule):
                 "sequence_accuracy": metrics.SequenceAccuracy(),
             }
         )
-        # train
         self.train_metrics = metric_collection.clone(prefix="train/")
         self.val_metrics = metric_collection.clone(prefix="val/")
 
         self.test_tf_metrics = metric_collection.clone(prefix="test/tf_")
         self.test_greedy_metrics = metric_collection.clone(prefix="test/greedy_")
+        self.test_single_beam_metrics = metric_collection.clone(
+            prefix="test/single_beam_"
+        )
         self.test_beam_metrics = metric_collection.clone(prefix="test/beam_")
 
     def reset_parameters(self) -> None:
@@ -230,7 +229,8 @@ class PointerNetwork(pl.LightningModule):
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
         greedy_decoded = self.batch_greedy_decode(encoder_input)
-        beam_decoded = self.single_beam_search(encoder_input)
+        # beam_decoded = self.single_beam_search(encoder_input)
+        beam_decoded = self.batch_beam_search(encoder_input)
         self.log_dict(
             {
                 **self.test_tf_metrics(prediction, target),
@@ -239,6 +239,13 @@ class PointerNetwork(pl.LightningModule):
             },
             batch_size=target.batch_sizes[0],
         )
+        batch_size = target.batch_sizes[0]
+        if batch_size == 1:
+            s_beam_decoded = self.single_beam_search(encoder_input)
+            self.log_dict(
+                self.test_single_beam_metrics(s_beam_decoded, target),
+                batch_size=batch_size,
+            )
 
     def configure_optimizers(self) -> tp.Dict["str", tp.Any]:
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learn_rate)
@@ -340,7 +347,7 @@ class PointerNetworkForConvexHull(PointerNetwork):
                 self.attention(encoder_output, last_hidden[0])
             )[0].squeeze(0)
             # There are some conditions that a sequence must satisfy
-            # * first three tokens must be different and nonzero, else the
+            # * the first three tokens must be different and nonzero, else the
             #   sequence is not a polygon
             # * tokens in a sequence must be unique, except for the first one
             #   which is used to close the polygon
@@ -375,12 +382,7 @@ class PointerNetworkForConvexHull(PointerNetwork):
                 indices, shape=new_beam_scores.shape
             )
 
-            beams = torch.vstack(
-                [
-                    beams[:, beams_index],
-                    index_prediction,
-                ]
-            )
+            beams = torch.vstack([beams[:, beams_index], index_prediction])
             beam_scores = topk_scores
 
             # update recurrent state
@@ -399,3 +401,80 @@ class PointerNetworkForConvexHull(PointerNetwork):
         assert beam_scores.argmin() == 0
         winner = beams[:, 0:1]  # since topk is sorted winner is always first beam
         return nn.utils.rnn.pack_sequence(winner[: winner.argmin() + 1].unbind(1))
+
+    @torch.no_grad()
+    def batch_beam_search(
+        self, encoder_input: PackedSequence, nbeams: int = 3
+    ) -> PackedSequence:
+        # breakpoint()
+        pad = nn.utils.rnn.pad_packed_sequence
+        import numpy as np
+
+        device = self.device
+        max_len = len(encoder_input.batch_sizes) + 2
+        batch_size = encoder_input.batch_sizes[0].item()
+
+        # repeat inputs
+        input_padded, input_lens = nn.utils.rnn.pad_packed_sequence(encoder_input)
+        input_padded = torch.repeat_interleave(input_padded, nbeams, dim=1)
+        input_lens = torch.repeat_interleave(input_lens, nbeams, dim=0)
+        encoder_input = nn.utils.rnn.pack_padded_sequence(
+            input_padded, input_lens, enforce_sorted=False
+        )
+
+        encoder_output, last_hidden = self._encoder_forward(encoder_input)
+        decoder_input = self.start_symbol.repeat(1, batch_size * nbeams, 1)
+
+        beams = torch.empty(0, batch_size * nbeams, dtype=int, device=device)
+        beam_scores = torch.tensor(
+            [0.0, *[torch.inf] * (nbeams - 1)] * batch_size, device=device
+        )
+
+        for _ in range(max_len):
+            _, last_hidden = self.decoder(decoder_input, last_hidden)
+            logits = nn.utils.rnn.pad_packed_sequence(
+                self.attention(encoder_output, last_hidden[0])
+            )[0].squeeze(0)
+            probs = logits.softmax(1)
+            temp_scores = torch.log(probs)
+            # replace -inf with super negative value, but not -inf
+            temp_scores[temp_scores == -torch.inf] = torch.finfo().min
+            new_beam_scores = beam_scores[:, None] - temp_scores
+            topk_scores, indices = torch.topk(
+                new_beam_scores.view(batch_size, -1), k=nbeams, largest=False
+            )
+            # both of shape (batch_size, nbeams)
+            beams_index, index_prediction = _unravel_index(
+                indices, shape=(nbeams, new_beam_scores.shape[1])
+            )
+
+            # flatten beams_index and index_prediction
+            beams_index = beams_index.view(-1) + (
+                torch.arange(batch_size, device=device) * nbeams
+            )[:, None].repeat(1, nbeams).view(-1)
+            index_prediction = index_prediction.view(-1)
+            beams = torch.vstack([beams[:, beams_index], index_prediction])
+            beam_scores = topk_scores.view(-1)
+
+            assert torch.all(
+                index_prediction.cpu() < input_lens + 1
+            ), "some predictions are out of bounds"
+            decoder_input = input_padded[
+                None, index_prediction - 1, torch.arange(batch_size * nbeams)
+            ]
+            if torch.all(torch.any(beams == 0, dim=0)):
+                break
+        else:
+            beams = torch.vstack(
+                [beams, torch.zeros(batch_size, nbeams).type_as(beams)]
+            )
+
+        # reshape beam_scores ans beams to (batch_size, nbeams)
+        beam_scores = beam_scores.view(batch_size, nbeams)
+        beams = beams.view(-1, batch_size, nbeams)
+
+        assert torch.all(beam_scores.argmin(dim=1) == 0)
+        winners = beams[..., 0]
+        return nn.utils.rnn.pack_padded_sequence(
+            winners, lengths=winners.argmin(dim=0).cpu() + 1, enforce_sorted=False
+        )
