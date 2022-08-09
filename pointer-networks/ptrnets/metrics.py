@@ -1,3 +1,4 @@
+import typing as tp
 import functools
 import torch
 from torch.nn.utils.rnn import PackedSequence
@@ -88,75 +89,103 @@ class SequenceAccuracy(torchmetrics.Metric):
         return self.correct / self.total  # type:ignore[operator]
 
 
-def polygon_accuracy(
-    point_sets: PackedSequence, predictions: PackedSequence, targets: PackedSequence
-) -> float:
-    pad = functools.partial(torch.nn.utils.rnn.pad_packed_sequence, batch_first=True)
-
-    correct = []
-    for (
-        point_set,
-        point_set_len,
-        prediction,
-        prediction_len,
-        target,
-        target_len,
-    ) in zip(*pad(point_sets), *pad(predictions), *pad(targets)):
-        target_polygon = shapely.geometry.Polygon(
-            point_set[target[: target_len - 1] - 1].tolist()
-        )
-        predicted_polygon = shapely.geometry.Polygon(
-            point_set[prediction[: prediction_len - 1] - 1].tolist()
-        )
-        correct.append(target_polygon.equals(predicted_polygon))
-
-    return sum(correct) / len(correct)
-
-
 class PolygonAccuracy(torchmetrics.Metric):
-    def __init__(self):
+    correct: torch.Tensor
+    total: torch.Tensor
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.add_state("correct", default=torch.tensor(0), dist_reduce_fx="sum")
+        self.add_state("total", default=torch.tensor(0), dist_reduce_fx="sum")
         pass
 
-    def update(self, prediction, target):
-        pass
-
-    def compute(self):
-        pass
-
-
-def area_coverages(
-    point_sets: PackedSequence, predictions: PackedSequence, targets: PackedSequence
-) -> torch.Tensor:
-    pad = functools.partial(torch.nn.utils.rnn.pad_packed_sequence, batch_first=True)
-    coverages = []
-    for (
-        point_set,
-        point_set_len,
-        prediction,
-        prediction_len,
-        target,
-        target_len,
-    ) in zip(*pad(point_sets), *pad(predictions), *pad(targets)):
-        target_polygon = shapely.geometry.Polygon(
-            point_set[target[: target_len - 1] - 1].tolist()
+    def update(
+        self,
+        point_sets: PackedSequence,
+        predictions: PackedSequence,
+        targets: PackedSequence,
+    ) -> None:
+        pad = functools.partial(
+            torch.nn.utils.rnn.pad_packed_sequence, batch_first=True
         )
-        predicted_polygon = shapely.geometry.Polygon(
-            point_set[prediction[: prediction_len - 1] - 1].tolist()
+
+        if predictions.data.ndim == 2:
+            predictions = predictions._replace(data=predictions.data.argmax(1))
+
+        correct, total = 0, 0
+        for i, (
+            point_set,
+            point_set_len,
+            prediction,
+            prediction_len,
+            target,
+            target_len,
+        ) in enumerate(zip(*pad(point_sets), *pad(predictions), *pad(targets))):
+            target_polygon = shapely.geometry.Polygon(
+                point_set[target[: target_len - 1] - 1].tolist()
+            )
+            predicted_polygon = shapely.geometry.Polygon(
+                point_set[prediction[: prediction_len - 1] - 1].tolist()
+            )
+            correct += target_polygon.equals(predicted_polygon)
+            total += 1
+
+        self.correct += correct
+        self.total += total
+
+    def compute(self) -> torch.Tensor:
+        if self.correct == 0:
+            return torch.tensor(0.0)
+        return self.correct / self.total
+
+
+class AverageAreaCoverage(torchmetrics.Metric):
+    coverages: tp.List[torch.Tensor]
+    is_valid: tp.List[torch.Tensor]
+
+    def __init__(self, is_valid_threshold: float = 0.1) -> None:
+        super().__init__()
+
+        self.is_valid_threshold = is_valid_threshold
+        self.add_state("coverages", default=[], dist_reduce_fx="cat")
+        self.add_state("is_valid", default=[], dist_reduce_fx="cat")
+
+    def update(
+        self,
+        point_sets: PackedSequence,
+        predictions: PackedSequence,
+        targets: PackedSequence,
+    ) -> None:
+        pad = functools.partial(
+            torch.nn.utils.rnn.pad_packed_sequence, batch_first=True
         )
-        if predicted_polygon.is_simple:
+
+        coverages: tp.List[float] = []
+        is_valid: tp.List[bool] = []
+        for (
+            point_set,
+            point_set_len,
+            prediction,
+            prediction_len,
+            target,
+            target_len,
+        ) in zip(*pad(point_sets), *pad(predictions), *pad(targets)):
+            target_polygon = shapely.geometry.Polygon(
+                point_set[target[: target_len - 1] - 1].tolist()
+            )
+            predicted_polygon = shapely.geometry.Polygon(
+                point_set[prediction[: prediction_len - 1] - 1].tolist()
+            )
             coverages.append(predicted_polygon.area / target_polygon.area)
-        else:
-            coverages.append(-1.0)
+            is_valid.append(predicted_polygon.is_simple)
 
-    return torch.tensor(coverages)
+        self.coverages.append(torch.tensor(coverages))
+        self.is_valid.append(torch.tensor(is_valid))
 
+    def compute(self) -> torch.Tensor:
+        is_valid = torch.cat(self.is_valid, dim=0)
+        coverages = torch.cat(self.coverages, dim=0)
+        if torch.sum(~is_valid) > self.is_valid_threshold * len(is_valid):
+            return torch.tensor(-1.0)
 
-class AreaCoverage(torchmetrics.Metric):
-    def __init__(self):
-        pass
-
-    def update(self, prediction, target):
-        pass
-
-    def compute(self):
-        pass
+        return torch.mean(coverages[is_valid])

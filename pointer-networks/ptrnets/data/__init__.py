@@ -284,7 +284,7 @@ class ConvexHullDataModule(pl.LightningDataModule):
             dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_train),
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=os.cpu_count() or 0,
+            num_workers=4,
             collate_fn=collate_into_packed_sequence,
             pin_memory=True,
         )
@@ -294,6 +294,7 @@ class ConvexHullDataModule(pl.LightningDataModule):
             dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_val),
             batch_size=self.batch_size,
             shuffle=False,
+            num_workers=4,
             collate_fn=collate_into_packed_sequence,
         )
 
@@ -303,6 +304,7 @@ class ConvexHullDataModule(pl.LightningDataModule):
                 dataset=tp.cast(torch.utils.data.Dataset[_Batch], dataset),
                 batch_size=self.batch_size,
                 shuffle=False,
+                num_workers=4,
                 collate_fn=collate_into_packed_sequence,
             )
             for dataset in self.convex_hull_test_datasets

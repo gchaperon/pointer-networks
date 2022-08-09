@@ -15,7 +15,13 @@ import click
     multiple=True,
 )
 @click.option("--batch-size", default=128)
-def main(experiment_dir: str, test_npoints: str, batch_size: int) -> None:
+@click.option("--limit-batches", type=int)
+def main(
+    experiment_dir: str,
+    test_npoints: str,
+    batch_size: int,
+    limit_batches: tp.Optional[int] = None,
+) -> None:
 
     print(experiment_dir, test_npoints, batch_size)
     ckpt_path = str(next((pathlib.Path(experiment_dir) / "checkpoints").iterdir()))
@@ -24,6 +30,7 @@ def main(experiment_dir: str, test_npoints: str, batch_size: int) -> None:
     datamodule = ptrnets.ConvexHullDataModule("data", "50", test_npoints, batch_size)
     trainer = pl.Trainer(
         gpus=-1 if torch.cuda.is_available() else 0,
+        limit_test_batches=limit_batches or 1.0,
     )
 
     trainer.test(model, datamodule)

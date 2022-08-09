@@ -151,9 +151,13 @@ class PointerNetwork(pl.LightningModule):
         )
         self.train_metrics = metric_collection.clone(prefix="train/")
         self.val_metrics = metric_collection.clone(prefix="val/")
-
-        self.test_tf_metrics = metric_collection.clone(prefix="test/tf_")
-        self.test_beam_metrics = metric_collection.clone(prefix="test/beam_")
+        self.test_metrics = torchmetrics.MetricCollection(
+            {
+                "polygon_accuracy": metrics.PolygonAccuracy(),
+                "polygon_coverage": metrics.AverageAreaCoverage(),
+            },
+            prefix="test/",
+        )
 
     def reset_parameters(self) -> None:
         for param in self.parameters():
@@ -202,9 +206,7 @@ class PointerNetwork(pl.LightningModule):
     ) -> torch.Tensor:
         return F.cross_entropy(prediction.data, target.data)
 
-    def validation_step(
-        self, batch: ptrnets.data._Batch, batch_idx: int
-    ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+    def validation_step(self, batch: ptrnets.data._Batch, batch_idx: int) -> None:
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
 
@@ -219,14 +221,10 @@ class PointerNetwork(pl.LightningModule):
     def test_step(
         self, batch: ptrnets.data._Batch, batch_idx: int, dataloader_idx: int = 0
     ) -> None:
-        encoder_input, decoder_input, target = batch
-        prediction = self(encoder_input, decoder_input)
-        beam_decoded = self.decode(encoder_input)
+        encoder_input, _, target = batch
+        decoded = self.decode(encoder_input)
         self.log_dict(
-            {
-                **self.test_tf_metrics(prediction, target),
-                **self.test_beam_metrics(beam_decoded, target),
-            },
+            self.test_metrics(encoder_input, decoded, target),
             batch_size=target.batch_sizes[0],
         )
 
@@ -234,9 +232,13 @@ class PointerNetwork(pl.LightningModule):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learn_rate)
         return {
             "optimizer": optimizer,
-            "lr_scheduler": torch.optim.lr_scheduler.ExponentialLR(
-                optimizer, gamma=0.96
-            ),
+            "lr_scheduler": {
+                "scheduler": torch.optim.lr_scheduler.ExponentialLR(
+                    optimizer, gamma=0.96
+                ),
+                "interval": "epoch",
+                "name": "lr/adam",
+            },
         }
 
     def decode(self, encoder_input: PackedSequence, nbeams: int = 0) -> PackedSequence:
@@ -293,14 +295,20 @@ class PointerNetworkForConvexHull(PointerNetwork):
             # will be closed implicitly by the function computing polygon
             # metrics.
             if i < 3:
-                # shouldn't predict neither 0 nor the already seen values
+                # shouldn't predict neither 0 nor any of the already seen values
                 logits[:, 0] = -torch.inf
                 logits[torch.arange(batch_size * nbeams), beams] = -torch.inf
             else:
+                # is finished if has a zero anywhere or the first element is
+                # repeated, ie the polygon has closed
+                #
                 # finished should only predict 0, unfinished should only
                 # predict new values or the first that was predicted in the
                 # beam
-                finished_mask = torch.any(beams == 0, dim=0)
+                finished_mask = torch.any(beams == 0, dim=0) | torch.any(
+                    beams[1:] == beams[0], dim=0
+                )
+
                 logits[finished_mask, 1:] = -torch.inf
                 logits[~finished_mask, beams[1:, ~finished_mask]] = -torch.inf
 
@@ -330,7 +338,10 @@ class PointerNetworkForConvexHull(PointerNetwork):
 
             # update recurrent state
             # choose the last hidden from the correct beams
-            last_hidden = tuple(t[:, beams_index] for t in last_hidden)
+            last_hidden = (
+                last_hidden[0][:, beams_index],
+                last_hidden[1][:, beams_index],
+            )
             assert torch.all(
                 index_prediction.cpu() < input_lens + 1
             ), "some predictions are out of bounds"

@@ -85,16 +85,18 @@ def train_tsp(
 @click.option("--init-range", nargs=2, default=(-0.08, 0.08))
 @click.option("--batch-size", default=128)
 @click.option("--max-grad-norm", default=2.0)
+@click.option("--seed", default=42)
 def train_convex_hull(
     train_npoints: ptrnets.ConvexHull.NPointsT,
-    test_npoints: ptrnets.ConvexHull.NPointsT,
+    test_npoints: tp.List[ptrnets.ConvexHull.NPointsT],
     learn_rate: float,
     hidden_size: int,
     init_range: tp.Tuple[float, float],
     batch_size: int,
     max_grad_norm: float,
+    seed: int,
 ) -> tp.List[tp.Dict[str, float]]:
-
+    pl.seed_everything(seed, workers=True)
     datamodule = ptrnets.ConvexHullDataModule(
         "data", train_npoints, test_npoints, batch_size
     )
@@ -110,7 +112,10 @@ def train_convex_hull(
         "mode": "max",
     }
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
-        filename="epoch={epoch}-val_sequence_acc={val/sequence_acc:.3f}",
+        filename=(
+            "epoch={epoch}-"
+            "val_sequence_acc={" + checkpoint_callback_kwargs["monitor"] + ":.3f}"
+        ),
         auto_insert_metric_name=False,
         **checkpoint_callback_kwargs,
     )
@@ -130,19 +135,15 @@ def train_convex_hull(
             ),
             checkpoint_callback,
         ],
-        max_epochs=200,
+        max_epochs=1000,
         deterministic=True,
         limit_train_batches=200,
         limit_val_batches=20,
     )
     trainer.fit(model, datamodule)
-
-
-#     trainer.test(
-#         model,
-#         datamodule=datamodule,
-#         ckpt_path=checkpoint_callback.best_model_path,
-#     )
+    trainer.test(
+        model, datamodule=datamodule, ckpt_path=checkpoint_callback.best_model_path
+    )
 
 
 @click.group()
@@ -195,14 +196,4 @@ main.add_command(optimize)
 
 
 if __name__ == "__main__":
-    import warnings
-
-    warnings.filterwarnings(
-        "ignore",
-        message=r".*(val|test)_dataloader.*num_workers",
-        category=UserWarning,
-    )
-
-    pl.seed_everything(42, workers=True)
-    res = train_convex_hull()
-    print(res)
+    train_convex_hull()
