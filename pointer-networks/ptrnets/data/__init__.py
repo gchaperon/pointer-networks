@@ -217,7 +217,7 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
                 "Check the paper (or the data dir) for available combinations"
             )
 
-        self.point_sets, self.targets = joblib.Memory(datadir, verbose=5).cache(
+        self.point_sets, self.targets = joblib.Memory(datadir, verbose=10).cache(
             load_file
         )(pathlib.Path(datadir) / fname)
 

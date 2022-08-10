@@ -7,7 +7,6 @@ import pytorch_lightning as pl
 import ptrnets
 
 
-# breakpoint()
 @click.command()
 @click.option(
     "--train-split",
@@ -137,12 +136,12 @@ def train_convex_hull(
         ],
         max_epochs=1000,
         deterministic=True,
-        limit_train_batches=200,
-        limit_val_batches=20,
     )
     trainer.fit(model, datamodule)
     trainer.test(
-        model, datamodule=datamodule, ckpt_path=checkpoint_callback.best_model_path
+        model,
+        datamodule=datamodule,
+        ckpt_path=checkpoint_callback.best_model_path or None,
     )
 
 
