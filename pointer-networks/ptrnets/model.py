@@ -118,14 +118,17 @@ class PointerNetwork(pl.LightningModule):
         self.learn_rate = learn_rate
         self.init_range = init_range
 
+        # Parameters
+        # ==========
         # => in the paper
         self.start_symbol = nn.Parameter(torch.empty(input_size))
         # <= in the paper
         self.end_symbol = nn.Parameter(torch.empty(hidden_size))
-        # learn initial cell state
+        # learned initial cell state
         self.encoder_c_0 = nn.Parameter(torch.empty(hidden_size))
+
         # Modules
-        # ======================================================
+        # =======
         self.encoder = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
@@ -142,7 +145,7 @@ class PointerNetwork(pl.LightningModule):
         self.reset_parameters()
 
         # Metrics
-        # ======================================================
+        # =======
         metric_collection = torchmetrics.MetricCollection(
             {
                 "token_accuracy": metrics.TokenAccuracy(),
@@ -151,6 +154,8 @@ class PointerNetwork(pl.LightningModule):
         )
         self.train_metrics = metric_collection.clone(prefix="train/")
         self.val_metrics = metric_collection.clone(prefix="val/")
+        # NOTE: test_metrics are prefixed in test_step to give significant
+        # names to each test dataloader
         self.test_metrics = torchmetrics.MetricCollection(
             {
                 "polygon_accuracy": metrics.PolygonAccuracy(),
@@ -191,7 +196,6 @@ class PointerNetwork(pl.LightningModule):
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
         loss = self._get_loss(prediction, target)
-
         self.log_dict(
             {
                 "train/loss": loss,
@@ -209,7 +213,6 @@ class PointerNetwork(pl.LightningModule):
     def validation_step(self, batch: ptrnets.data._Batch, batch_idx: int) -> None:
         encoder_input, decoder_input, target = batch
         prediction = self(encoder_input, decoder_input)
-
         self.log_dict(
             {
                 "val/loss": self._get_loss(prediction, target),
@@ -223,9 +226,11 @@ class PointerNetwork(pl.LightningModule):
     ) -> None:
         encoder_input, _, target = batch
         decoded = self.decode(encoder_input)
+        # prefix = f"test/n={self.trainer.datamodule.test_npointss[dataloader_idx]}/"
         self.log_dict(
             self.test_metrics(encoder_input, decoded, target),
             batch_size=target.batch_sizes[0],
+            # add_dataloader_idx=False,
         )
 
     def configure_optimizers(self) -> tp.Dict["str", tp.Any]:

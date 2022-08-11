@@ -13,10 +13,11 @@ import numpy.typing as npt
 
 def load_file(
     fname: pathlib.Path,
+    inner_path: tp.Optional[str] = None,
 ) -> tp.Tuple[npt.NDArray[np.float32], npt.NDArray[np.int64]]:
     point_sets: tp.List[npt.NDArray[np.float32]] = []
     targets: tp.List[npt.NDArray[np.int64]] = []
-    with uopen(fname) as file:
+    with uopen(fname, inner_path) as file:
         for line in tqdm.tqdm(file, desc=f"Loading {fname}", unit="lines"):
             point_set, target = parse_line(line)
             point_sets.append(point_set)
