@@ -11,7 +11,7 @@ or manually using the web interface.
 Alternatively, since gdown has sometimes failed me, I'm hosting it myself (hopefully it's not illegal).
 You can download it like so
 ```bash
-$ wget -qO- https://users.dcc.uchile.cl/~gchapero/datasets/ptr-nets-data.tar.gz | tar -C data -xzv
+$ mkdir -p data && wget -qO- https://users.dcc.uchile.cl/~gchapero/datasets/ptr-nets-data.tar.gz | tar -C data -xzv
 ```
 
 In any case, the data dir should end up looking like this

@@ -1,14 +1,14 @@
-import joblib
-import typing as tp
-import pathlib
 import functools
-import torch
-import pytorch_lightning as pl
+import pathlib
+import typing as tp
+
+import joblib
 import numpy as np
 import numpy.typing as npt
+import pytorch_lightning as pl
+import torch
 
 from .utils import load_file
-
 
 _PtrNetItem = tp.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 _Batch = tp.Tuple[
@@ -126,6 +126,8 @@ class ConvexHullDataModule(pl.LightningDataModule):
 
     def train_dataloader(self) -> torch.utils.data.DataLoader[_Batch]:
         return torch.utils.data.DataLoader(
+            # NOTE: for cast explanation see this
+            # https://github.com/pytorch/pytorch/blob/v1.11.0/torch/utils/data/dataloader.py#L30
             dataset=tp.cast(torch.utils.data.Dataset[_Batch], self.convex_hull_train),
             batch_size=self.batch_size,
             shuffle=True,

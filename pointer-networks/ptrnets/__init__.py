@@ -1,8 +1,8 @@
-from ptrnets.data import TSP, TSPDataModule, ConvexHull, ConvexHullDataModule
+from ptrnets.data import TSP, ConvexHull, ConvexHullDataModule, TSPDataModule
 from ptrnets.model import (
     PointerNetwork,
-    PointerNetworkForTSP,
     PointerNetworkForConvexHull,
+    PointerNetworkForTSP,
 )
 
 __all__ = [

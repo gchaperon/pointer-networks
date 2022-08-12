@@ -1,10 +1,10 @@
-import typing as tp
 import functools
-import torch
-from torch.nn.utils.rnn import PackedSequence
+import typing as tp
 
-import torchmetrics
 import shapely.geometry
+import torch
+import torchmetrics
+from torch.nn.utils.rnn import PackedSequence
 
 
 def _multiarange(counts: torch.Tensor) -> torch.Tensor:

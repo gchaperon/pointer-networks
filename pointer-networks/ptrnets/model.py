@@ -1,12 +1,14 @@
+import typing as tp
+
 import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
-from torch.nn.utils.rnn import PackedSequence
 import torch.nn.functional as F
-import pytorch_lightning as pl
-import ptrnets
-import typing as tp
 import torchmetrics
+from torch.nn.utils.rnn import PackedSequence
+
+import ptrnets
 import ptrnets.metrics as metrics
 
 
@@ -26,24 +28,9 @@ def _prepend(sequences: PackedSequence, tensor: torch.Tensor) -> PackedSequence:
     )
 
 
-def _cat_packed_sequences(packed_sequences: tp.List[PackedSequence]) -> PackedSequence:
-    """Concatenate packed sequences along batch dimention"""
-    max_sequence_len = max(len(packed.batch_sizes) for packed in packed_sequences)
-    padded, lens = zip(
-        *(
-            nn.utils.rnn.pad_packed_sequence(packed, total_length=max_sequence_len)
-            for packed in packed_sequences
-        )
-    )
-    concatenated = nn.utils.rnn.pack_padded_sequence(
-        torch.cat(padded, dim=1), torch.cat(lens), enforce_sorted=False
-    )
-    return concatenated
-
-
 def _unravel_index(
     indices: torch.Tensor, shape: tp.Tuple[int, ...]
-) -> tp.Tuple[torch.Tensor, torch.Tensor]:
+) -> tp.Tuple[torch.Tensor, ...]:
     # Supper innefficient to copy to cpu and then back to cuda if indices
     # is a cuda tensor, but for now it suffices.
     device = indices.device
@@ -68,10 +55,14 @@ class Attention(nn.Module):
         decoder_output: tp.Union[torch.Tensor, PackedSequence],
     ) -> PackedSequence:
         # treat everything as PackedSequence
+        # NOTE: on type ignore, pack_sequence is poorly typed since it can
+        # accept any sequence, not just lists
         if isinstance(encoder_output, torch.Tensor):
-            encoder_output = nn.utils.rnn.pack_sequence(encoder_output.unbind(1))
+            sentences: tp.Sequence[torch.Tensor] = encoder_output.unbind(1)
+            encoder_output = nn.utils.rnn.pack_sequence(sentences)  # type: ignore
         if isinstance(decoder_output, torch.Tensor):
-            decoder_output = nn.utils.rnn.pack_sequence(decoder_output.unbind(1))
+            sentences = decoder_output.unbind(1)
+            decoder_output = nn.utils.rnn.pack_sequence(sentences)  # type:ignore
 
         assert (
             encoder_output.batch_sizes[0] == decoder_output.batch_sizes[0]
@@ -112,7 +103,7 @@ class PointerNetwork(pl.LightningModule):
         learn_rate: float,
         init_range: tp.Tuple[float, float],
         dropout: float = 0.0,
-    ):
+    ) -> None:
         super().__init__()
         self.save_hyperparameters()
         self.learn_rate = learn_rate
@@ -235,8 +226,15 @@ class PointerNetwork(pl.LightningModule):
 
 
 class PointerNetworkForConvexHull(PointerNetwork):
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        learn_rate: float,
+        init_range: tp.Tuple[float, float],
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__(input_size, hidden_size, learn_rate, init_range, dropout)
 
         # NOTE: test_metrics are prefixed in test_step to give significant
         # names to each test dataloader
@@ -280,7 +278,9 @@ class PointerNetworkForConvexHull(PointerNetwork):
         # initial state
         encoder_output, last_hidden = self._encoder_forward(encoder_input)
         decoder_input = self.start_symbol.repeat(1, batch_size * nbeams, 1)
-        beams = torch.empty(0, batch_size * nbeams, dtype=int, device=self.device)
+        beams = torch.empty(
+            0, batch_size * nbeams, dtype=torch.long, device=self.device
+        )
         beam_scores = torch.tensor(
             [0.0, *[torch.inf] * (nbeams - 1)] * batch_size, device=self.device
         )
@@ -394,8 +394,15 @@ class PointerNetworkForTSP(PointerNetwork):
     base class or something.
     """
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        input_size: int,
+        hidden_size: int,
+        learn_rate: float,
+        init_range: tp.Tuple[float, float],
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__(input_size, hidden_size, learn_rate, init_range, dropout)
 
         self.test_metrics = torchmetrics.MetricCollection(
             {
@@ -428,7 +435,9 @@ class PointerNetworkForTSP(PointerNetwork):
 
         encoder_output, last_hidden = self._encoder_forward(encoder_input)
         decoder_input = self.start_symbol.repeat(1, batch_size * nbeams, 1)
-        beams = torch.empty(0, batch_size * nbeams, dtype=int, device=self.device)
+        beams = torch.empty(
+            0, batch_size * nbeams, dtype=torch.long, device=self.device
+        )
         beam_scores = torch.tensor(
             [0.0, *[torch.inf] * (nbeams - 1)] * batch_size, device=self.device
         )
@@ -461,7 +470,8 @@ class PointerNetworkForTSP(PointerNetwork):
                     torch.arange(visited.shape[1]).expand_as(visited)
                     > input_lens[:, None]
                 ] = True
-                # consider node zero as visited since it can only be visited by finished beams
+                # consider node zero as visited since it can only be visited by
+                # finished beams
                 visited[:, 0] = True
                 visited[torch.arange(batch_size * nbeams), beams] = True
                 all_visited = torch.all(visited, dim=1)

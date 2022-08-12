@@ -3,12 +3,12 @@ import io
 import itertools
 import pathlib
 import typing as tp
-import tqdm
 import zipfile
 
 import numpy as np
 import numpy.ma as ma
 import numpy.typing as npt
+import tqdm
 
 
 def load_file(
@@ -23,7 +23,7 @@ def load_file(
             point_sets.append(point_set)
             targets.append(target)
 
-    _DT = tp.TypeVar("_DT")
+    _DT = tp.TypeVar("_DT", bound=np.generic)
 
     def to_masked(array: npt.NDArray[_DT], max_len: int) -> npt.NDArray[_DT]:
         masked: npt.NDArray[_DT] = ma.array(

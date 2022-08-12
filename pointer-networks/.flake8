@@ -1,4 +1,4 @@
 [flake8]
-exclude = .git,__pycache__,env
+exclude = .git,__pycache__,env,data
 max-line-length = 88
 extend-ignore = E203, E302
