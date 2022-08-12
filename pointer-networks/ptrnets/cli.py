@@ -107,7 +107,7 @@ def train_single_tsp(
 ) -> None:
     pl.seed_everything(seed, workers=True)
     datamodule = ptrnets.TSPDataModule("data", train_opts, test_optss, batch_size)
-    model = ptrnets.PointerNetwork(
+    model = ptrnets.PointerNetworkForTSP(
         input_size=2,
         hidden_size=hidden_size,
         learn_rate=learn_rate,
@@ -145,8 +145,11 @@ def train_single_tsp(
         deterministic=True,
     )
     trainer.fit(model, datamodule)
-    best_score = checkpoint_callback.best_model_score
-    return best_score.item() if best_score else -1.0
+    trainer.test(
+        model,
+        datamodule,
+        ckpt_path=checkpoint_callback.best_model_path or None,
+    )
 
 
 @train.command(name="tsp", context_settings={"show_default": True})

@@ -189,3 +189,52 @@ class AverageAreaCoverage(torchmetrics.Metric):
             return torch.tensor(-1.0)
 
         return torch.mean(coverages[is_valid])
+
+
+class TourDistance(torchmetrics.Metric):
+    tour_distances: tp.List[torch.Tensor]
+
+    def __init__(self) -> None:
+        super().__init__()
+
+        self.add_state("tour_distances", default=[], dist_reduce_fx="cat")
+
+    def update(self, point_sets: PackedSequence, prediction: PackedSequence) -> None:
+        batch_size = point_sets.batch_sizes[0]
+        device = point_sets.data.device
+
+        point_sets_padded, npoints = torch.nn.utils.rnn.pad_packed_sequence(
+            point_sets, batch_first=True
+        )
+
+        prediction_padded, prediction_lens = torch.nn.utils.rnn.pad_packed_sequence(
+            prediction, batch_first=True
+        )
+        max_pred_len = prediction_padded.shape[1]
+
+        batch_arange = torch.arange(batch_size, device=device)
+        assert torch.all(
+            prediction_padded[batch_arange, prediction_lens - 1] == 0
+        ), "all prediction should finish with a 0"
+        assert torch.all(
+            prediction_padded[batch_arange, prediction_lens - 2]
+            == prediction_padded[:, 0]
+        ), "all tours should end where they start"
+        # pad with the first value, so that summing distances after closing
+        # tour doesn't increase the tour distance
+        prediction_padded += (
+            torch.arange(max_pred_len, device=device).expand_as(prediction_padded)
+            >= (prediction_lens.to(device) - 1)[:, None]
+        ) * prediction_padded[:, 0:1]
+        # NOTE: i just trust from decoding that there are no repeated points
+        # and all points are visited
+        curr = point_sets_padded[batch_arange[:, None], prediction_padded[:, :-1] - 1]
+        next_ = point_sets_padded[batch_arange[:, None], prediction_padded[:, 1:] - 1]
+        tour_distances = torch.sum(
+            torch.sqrt(torch.sum((next_ - curr) ** 2, dim=2)), dim=1
+        )
+        self.tour_distances.append(tour_distances)
+
+    def compute(self) -> torch.Tensor:
+        all_tour_distances = torch.cat(self.tour_distances)
+        return all_tour_distances.mean()
