@@ -136,7 +136,7 @@ def train_single_tsp(
         callbacks=[
             pl.callbacks.LearningRateMonitor(),
             pl.callbacks.EarlyStopping(
-                patience=3,
+                patience=5,
                 **checkpoint_callback_kwargs,
             ),
             checkpoint_callback,
@@ -172,7 +172,7 @@ def train_single_tsp(
     multiple=True,
 )
 @click.option("--learn-rate", default=1e-3)
-@click.option("--hidden-size", default=256)
+@click.option("--hidden-size", default=512)
 @click.option("--init-range", nargs=2, default=(-0.08, 0.08))
 @click.option("--batch-size", default=128)
 @click.option("--max-grad-norm", default=2.0)

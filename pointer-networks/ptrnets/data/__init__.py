@@ -301,7 +301,7 @@ class TSPDataModule(pl.LightningDataModule):
                 dataset=tp.cast(torch.utils.data.Dataset[_Batch], dataset),
                 batch_size=self.batch_size,
                 shuffle=False,
-                # num_workers=4,
+                num_workers=4,
                 collate_fn=collate_into_packed_sequence,
             )
             for dataset in self.tsp_test_datasets
