@@ -1,4 +1,5 @@
 import functools
+import logging
 import pathlib
 import typing as tp
 
@@ -58,9 +59,13 @@ class ConvexHull(torch.utils.data.Dataset[_PtrNetItem]):
                 "Check the paper (or the data dir) for available combinations"
             )
 
-        self.point_sets, self.targets = joblib.Memory(datadir, verbose=10).cache(
-            load_file
-        )(pathlib.Path(datadir) / fname)
+        print(f"Loading {self!r}")
+        memory = joblib.Memory(
+            datadir, verbose=10 if logging.getLogger().level < logging.ERROR else 0
+        )
+        self.point_sets, self.targets = memory.cache(load_file)(
+            pathlib.Path(datadir) / fname
+        )
 
     def __repr__(self) -> str:
         return (
@@ -210,8 +215,11 @@ class TSP(torch.utils.data.Dataset[_PtrNetItem]):
                 'Check the paper and "Notes on data" in the readme.'
             )
 
+        print(f"Loading {self!r}")
         fname, *extras = open_args
-        memory = joblib.Memory(datadir, verbose=10)
+        memory = joblib.Memory(
+            datadir, verbose=10 if logging.getLogger().level < logging.ERROR else 0
+        )
         self.point_sets, self.targets = memory.cache(load_file)(
             pathlib.Path(datadir) / fname, *extras
         )

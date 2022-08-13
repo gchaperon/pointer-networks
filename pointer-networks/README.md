@@ -1,6 +1,8 @@
 # Pointer Networks
 My replication code for the paper [Pointer Networks](https://arxiv.org/abs/1506.03134).
 
+**tldr:** go to [results](#results)
+
 # The data
 The official data is hosted at http://goo.gl/NDcOIG. It can be downloaded using `gdown`
 ```bash
@@ -8,8 +10,8 @@ $ gdown --folder --output data https://drive.google.com/drive/folders/0B2fg8yPGn
 ```
 or manually using the web interface.
 
-Alternatively, since gdown has sometimes failed me, I'm hosting it myself (hopefully it's not illegal).
-You can download it like so
+Alternatively, since gdown has sometimes failed me, I'm hosting it myself (hopefully
+it's not illegal).  You can download it like so
 ```bash
 $ mkdir -p data && wget -qO- https://users.dcc.uchile.cl/~gchapero/datasets/ptr-nets-data.tar.gz | tar -C data -xzv
 ```
@@ -26,54 +28,117 @@ data
 ├── tsp_10_train_exact.txt
 ├── ...
 └── tsp_5_train.zip
-
 ```
 
-# Notes on data
-## Train
-Training splits with data files correspondance
+## Notes
 
-| train split         | file                         |
-|---------------------|------------------------------|
-| `n=5 (optimal)`     | `tsp_5_train.zip/tsp5.txt`   |
-| `n=10 (optimal)`    | `tsp_10_train_exact.txt`     |
-| `n=50 (a1 trained)` | `tsp_50_train.zip`           |
-| `n=50 (a3 trained)` | `???`                        |
-| `n=5-20 (optimal)`  | `tsp_5-20_train.zip/*`       |
+Not all data is available, only data for convex hull and tsp. Even then, some splits are
+missing. See
+[here](https://github.com/gchaperon/replication/blob/63f3d0b73e44f93baad5b6106375208ecec2627d/pointer-networks/ptrnets/data/__init__.py#L31)
+for available splits for convex hull and
+[here](https://github.com/gchaperon/replication/blob/63f3d0b73e44f93baad5b6106375208ecec2627d/pointer-networks/ptrnets/data/__init__.py#L172)
+for tsp splits.
 
-Some files were determined by inspecting the average tour distance. In particular, there are 2 `tsp_10_*` train/test pairs and only one `tsp_50_*` train/test pair.
+Notice also that some splits in tsp were identified by computing the average solution
+distance, since not all of them are tagged with the algorithm used to solve the problem.
 
-## Test
-Data files correspondance with Table 2 of the paper
+# User Guided
+The code was tested on python 3.9 using pytorch 1.11. Other versions might work but your
+mileage may vary.
+## Install
+To install the dependencies run
+```bash
+pip install -r requirements.txt
+```
 
-| n                 | optimal                         | a1                                | a2    | a3    |
-|-------------------|---------------------------------|-----------------------------------|-------|-------|
-| 5                 | `tsp_5_train.zip/tsp5_test.txt` | `???`                             | `???` | `???` |
-| 10                | `tsp_10_test_exact.txt`         | `tsp_10_train.zip/tsp10_test.txt` | `???` | `???` |
-| 50 (a1 trained)   | `na`                            | `tsp_50_test.txt.zip`             | `???` | `???` |
-| 50 (a3 trained)   | `na`                            | `same`                            | `???` | `???` |
-| 5 (5-20 trained)  | `same`                          | `???`                             | `???` | `???` |
-| 10 (5-20 trained) | `same`                          | `???`                             | `???` | `???` |
-| 20 (5-20 trained) | `???`                           | `tsp_20_test.txt`                 | `???` | `???` |
-| 25 (5-20 trained) | `na`                            | `???`                             | `???` | `???` |
-| 30 (5-20 trained) | `na`                            | `???`                             | `???` | `???` |
-| 40 (5-20 trained) | `na`                            | `tsp_40_test.txt`                 | `???` | `???` |
-| 50 (5-20 trained) | `na`                            | `same`                            | `???` | `???` |
+## CLI
+The cli has two commands, `train` and `replicate`
+```bash
+$ python -m ptrnets --help
+Usage: python -m ptrnets [OPTIONS] COMMAND [ARGS]...
 
-`na` means it shouldn't exist, `???` means it should exist but isn't found in `./data` and `same` means its the same file from a previous row.
+Options:
+  --help  Show this message and exit.
 
-Again, some were determined by inspecting the average tour distance.
+Commands:
+  replicate
+  train
+```
 
-# Changes
+If you want to replicate the results of the paper run 
+```bash
+$ python -m ptrnets replicate
+```
+This should handle loading the data and running all the experiments of the paper
+
+I also provide a simple train command where you can choose to either train the network
+for convex hull or tsp, and tweak hyperparameters. Here is the synopsis for training in
+convex hull.
+```bash
+$ python -m ptrnets train convex-hull --help
+Usage: python -m ptrnets train convex-hull [OPTIONS]
+
+Options:
+  --train-npoints [5|10|50|200|500|5-50]
+                                  [required]
+  --test-npoints [5|10|50|200|500|5-50]
+                                  [required]
+  --learn-rate FLOAT              [default: 1.0]
+  --hidden-size INTEGER           [default: 256]
+  --init-range FLOAT...           [default: -0.08, 0.08]
+  --batch-size INTEGER            [default: 128]
+  --max-grad-norm FLOAT           [default: 2.0]
+  --seed INTEGER                  [default: 42]
+  --help                          Show this message and exit.
+```
+
+
+# Results
+These results were produced by running `python -m ptrnets replicate --write`, and
+copy-pasted from the [reports](reports/) dir. The command took ~12h to run on a single
+RTX2080 (8gb), but I didn't see more than ~5gb of VRAM usage.
+
+The results are considerably off, so I will do some hparam tweaking in the future.
+
+## Convex Hull
+Compare with Table 1 of the paper.
+
+| method   | trained n   |   n | accuracy   | area   |
+|----------|-------------|-----|------------|--------|
+| ptr-net  | 50          |  50 | 41.1%      | 99.8%  |
+| ptr-net  | 5-50        |   5 | 85.4%      | 99.0%  |
+| ptr-net  | 5-50        |  10 | 69.7%      | 99.6%  |
+| ptr-net  | 5-50        |  50 | 30.5%      | 99.8%  |
+| ptr-net  | 5-50        | 200 | 0.9%       | 99.4%  |
+| ptr-net  | 5-50        | 500 | 0.0%       | 99.0%  |
+
+## TSP
+Compare with Table 2 of the paper.
+
+| n                 |   ptr-net |
+|-------------------|-----------|
+| 5                 |      2.12 |
+| 10                |      2.89 |
+| 50 (a1 trained)   |      7.77 |
+| 5 (5-20 trained)  |      2.18 |
+| 10 (5-20 trained) |      3.04 |
+| 20 (5-20 trained) |      4.25 |
+| 40 (5-20 trained) |      8.4  |
+| 50 (5-20 trained) |     11.15 |
+
+<!---# Changes
 Here is the list of changes I did to the original paper description
 
-* Optimizer: SGD to Adam and add learn rate scheduler. I obtained similar results with both but Adam converged faster.
+* Optimizer: SGD to Adam and add learn rate scheduler. I obtained similar results with
+  eoth but Adam converged faster.  --->
+
 
 # Other implementations
+Some were useful, some weren't
+
 * https://github.com/devsisters/pointer-network-tensorflow
 * https://github.com/keon/pointer-networks
 * https://github.com/vshallc/PtrNets
 * https://github.com/Chanlaw/pointer-networks
 * https://github.com/devnag/tensorflow-pointer-networks
 * https://github.com/ast0414/pointer-networks-pytorch
-

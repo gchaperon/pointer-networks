@@ -1,6 +1,7 @@
 import contextlib
 import io
 import itertools
+import logging
 import pathlib
 import typing as tp
 import zipfile
@@ -18,7 +19,12 @@ def load_file(
     point_sets: tp.List[npt.NDArray[np.float32]] = []
     targets: tp.List[npt.NDArray[np.int64]] = []
     with uopen(fname, inner_path) as file:
-        for line in tqdm.tqdm(file, desc=f"Loading {fname}", unit="lines"):
+        for line in tqdm.tqdm(
+            file,
+            desc=f"Loading {fname}",
+            unit="lines",
+            disable=logging.getLogger().level > logging.WARNING,
+        ):
             point_set, target = parse_line(line)
             point_sets.append(point_set)
             targets.append(target)
