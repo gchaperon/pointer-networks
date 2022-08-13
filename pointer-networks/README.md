@@ -5,14 +5,14 @@ My replication code for the paper [Pointer Networks](https://arxiv.org/abs/1506.
 
 # The data
 The official data is hosted at http://goo.gl/NDcOIG. It can be downloaded using `gdown`
-```bash
+```console
 $ gdown --folder --output data https://drive.google.com/drive/folders/0B2fg8yPGn2TCMzBtS0o4Q2RJaEU
 ```
 or manually using the web interface.
 
 Alternatively, since gdown has sometimes failed me, I'm hosting it myself (hopefully
 it's not illegal).  You can download it like so
-```bash
+```console
 $ mkdir -p data && wget -qO- https://users.dcc.uchile.cl/~gchapero/datasets/ptr-nets-data.tar.gz | tar -C data -xzv
 ```
 
@@ -42,18 +42,20 @@ for tsp splits.
 Notice also that some splits in tsp were identified by computing the average solution
 distance, since not all of them are tagged with the algorithm used to solve the problem.
 
-# User Guided
+# User Guide
 The code was tested on python 3.9 using pytorch 1.11. Other versions might work but your
 mileage may vary.
 ## Install
 To install the dependencies run
-```bash
-pip install -r requirements.txt
+```console
+$ pip install -r requirements.txt
 ```
+Note that the pytorch _and_ cuda versions are pinned, so if you are using a gpu
+with different cuda capabilities you should modify the requirements file accordingly.
 
 ## CLI
 The cli has two commands, `train` and `replicate`
-```bash
+```console
 $ python -m ptrnets --help
 Usage: python -m ptrnets [OPTIONS] COMMAND [ARGS]...
 
@@ -66,15 +68,15 @@ Commands:
 ```
 
 If you want to replicate the results of the paper run 
-```bash
+```console
 $ python -m ptrnets replicate
 ```
 This should handle loading the data and running all the experiments of the paper
 
-I also provide a simple train command where you can choose to either train the network
+I also provide a simple `train` command where you can choose to either train the network
 for convex hull or tsp, and tweak hyperparameters. Here is the synopsis for training in
 convex hull.
-```bash
+```console
 $ python -m ptrnets train convex-hull --help
 Usage: python -m ptrnets train convex-hull [OPTIONS]
 
@@ -95,8 +97,9 @@ Options:
 
 # Results
 These results were produced by running `python -m ptrnets replicate --write`, and
-copy-pasted from the [reports](reports/) dir. The command took ~12h to run on a single
-RTX2080 (8gb), but I didn't see more than ~5gb of VRAM usage.
+copy-pasted from the [reports](reports/) dir. The training curves can be seen in the experiment
+at [TensorBoard.dev](https://tensorboard.dev/experiment/F80SgWxKRO2xmof6vKALkQ/).
+The command took ~12h to run on a single RTX2080 (8gb). I didn't see more than ~5gb of VRAM usage.
 
 The results are considerably off, so I will do some hparam tweaking in the future.
 
@@ -126,11 +129,16 @@ Compare with Table 2 of the paper.
 | 40 (5-20 trained) |      8.4  |
 | 50 (5-20 trained) |     11.15 |
 
-<!---# Changes
+# Changes
 Here is the list of changes I did to the original paper description
 
+* The paper states that the decoding process for the convex hull task was unconstrained.
+  I added some conditions to the decoding process for convex hull, see the details
+  [here](https://github.com/gchaperon/replication/blob/125e9d9a2de3790ffb502cc6cd10b8c1578003ca/pointer-networks/ptrnets/model.py#L376).
+<!---
 * Optimizer: SGD to Adam and add learn rate scheduler. I obtained similar results with
-  eoth but Adam converged faster.  --->
+  eoth but Adam converged faster.
+--->
 
 
 # Other implementations
