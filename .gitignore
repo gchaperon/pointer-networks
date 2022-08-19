@@ -1,1 +1,9 @@
-/tags
+env/
+# ignore both datadir and `data` symlink
+/data/
+/data
+/*logs*/
+__pycache__/
+*.swp
+
+.vimrc
