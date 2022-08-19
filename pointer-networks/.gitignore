@@ -1,7 +1,0 @@
-env/
-data/
-/*logs*/
-__pycache__/
-*.swp
-
-.vimrc
