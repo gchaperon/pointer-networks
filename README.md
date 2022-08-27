@@ -101,7 +101,7 @@ copy-pasted from the [reports](reports/) dir. The training curves can be seen in
 at [TensorBoard.dev](https://tensorboard.dev/experiment/F80SgWxKRO2xmof6vKALkQ/).
 The command took ~12h to run on a single RTX2080 (8gb). I didn't see more than ~5gb of VRAM usage.
 
-The results are considerably off, so I will do some hparam tweaking in the future.
+The results are considerably off, so maybe I will do some hparam tweaking in the future.
 
 ## Convex Hull
 Compare with Table 1 of the paper.
