@@ -213,16 +213,16 @@ class PointerNetwork(pl.LightningModule):
         )
 
     def configure_optimizers(self) -> tp.Dict["str", tp.Any]:
-        optimizer = torch.optim.SGD(self.parameters(), lr=self.learn_rate)
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learn_rate)
         return {
             "optimizer": optimizer,
-            # "lr_scheduler": {
-            #     "scheduler": torch.optim.lr_scheduler.ExponentialLR(
-            #         optimizer, gamma=0.95
-            #     ),
-            #     "interval": "epoch",
-            #     "name": f"lr/{type(optimizer).__name__.lower()}",
-            # },
+            "lr_scheduler": {
+                "scheduler": torch.optim.lr_scheduler.ExponentialLR(
+                    optimizer, gamma=0.96
+                ),
+                "interval": "epoch",
+                "name": f"lr/{type(optimizer).__name__.lower()}",
+            },
         }
 
 

@@ -78,7 +78,7 @@ def train_single(
     required=True,
     multiple=True,
 )
-@click.option("--learn-rate", default=1.0)
+@click.option("--learn-rate", default=1e-3)
 @click.option("--hidden-size", default=256)
 @click.option("--init-range", nargs=2, default=(-0.08, 0.08))
 @click.option("--batch-size", default=128)
@@ -131,7 +131,7 @@ def train_convex_hull(
     required=True,
     multiple=True,
 )
-@click.option("--learn-rate", default=1.0)
+@click.option("--learn-rate", default=1e-3)
 @click.option("--hidden-size", default=256)
 @click.option("--init-range", nargs=2, default=(-0.08, 0.08))
 @click.option("--batch-size", default=128)
@@ -188,7 +188,7 @@ def replicate(write: bool) -> None:
             "data", train_npoints, test_npointss, batch_size=128  # type:ignore
         )
         convex_hull_model = ptrnets.PointerNetworkForConvexHull(
-            input_size=2, hidden_size=256, learn_rate=1.0, init_range=(-0.08, 0.08)
+            input_size=2, hidden_size=256, learn_rate=1e-3, init_range=(-0.08, 0.08)
         )
         results = train_single(
             convex_hull_model, convex_hull_datamodule, "convex-hull", max_grad_norm=2.0
@@ -236,7 +236,7 @@ def replicate(write: bool) -> None:
             "data", train_opts, test_optss, batch_size=128  # type: ignore
         )
         tsp_model = ptrnets.PointerNetworkForTSP(
-            input_size=2, hidden_size=256, learn_rate=1.0, init_range=(-0.08, 0.08)
+            input_size=2, hidden_size=256, learn_rate=1e-3, init_range=(-0.08, 0.08)
         )
         results = train_single(tsp_model, tsp_datamodule, "tsp", max_grad_norm=2.0)
         for test_opts, result in zip(test_optss, results):
@@ -269,5 +269,3 @@ def replicate(write: bool) -> None:
             fout.write(table1_str)
         with open(reports_path / "table2.md", "w") as fout:
             fout.write(table2_str)
-
-    # print("comming soon...")
