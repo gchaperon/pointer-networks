@@ -32,11 +32,11 @@ data
 
 ## Notes
 
-Not all data is available, only data for convex hull and tsp. Even then, some splits are
-missing. See
-[here](https://github.com/gchaperon/replication/blob/63f3d0b73e44f93baad5b6106375208ecec2627d/pointer-networks/ptrnets/data/__init__.py#L31)
+Not all data is available, only data for convex hull and tsp. Even then, some
+splits are missing. See
+[here](https://github.com/gchaperon/pointer-networks/blob/master/ptrnets/data/__init__.py#L32)
 for available splits for convex hull and
-[here](https://github.com/gchaperon/replication/blob/63f3d0b73e44f93baad5b6106375208ecec2627d/pointer-networks/ptrnets/data/__init__.py#L172)
+[here](https://github.com/gchaperon/pointer-networks/blob/master/ptrnets/data/__init__.py#L171)
 for tsp splits.
 
 Notice also that some splits in tsp were identified by computing the average solution
@@ -98,22 +98,21 @@ Options:
 # Results
 These results were produced by running `python -m ptrnets replicate --write`, and
 copy-pasted from the [reports](reports/) dir. The training curves can be seen in the experiment
-at [TensorBoard.dev](https://tensorboard.dev/experiment/F80SgWxKRO2xmof6vKALkQ/).
-The command took ~12h to run on a single RTX2080 (8gb). I didn't see more than ~5gb of VRAM usage.
+at [TensorBoard.dev](https://tensorboard.dev/experiment/O5QdzV6OQMy2TXf2kLjp5Q/).
+The command took ~6h to run on a single RTX3090 (24gb). I didn't see more than ~5gb of VRAM usage.
 
-The results are considerably off, so maybe I will do some hparam tweaking in the future.
 
 ## Convex Hull
 Compare with Table 1 of the paper.
 
 | method   | trained n   |   n | accuracy   | area   |
 |----------|-------------|-----|------------|--------|
-| ptr-net  | 50          |  50 | 41.1%      | 99.8%  |
-| ptr-net  | 5-50        |   5 | 85.4%      | 99.0%  |
-| ptr-net  | 5-50        |  10 | 69.7%      | 99.6%  |
-| ptr-net  | 5-50        |  50 | 30.5%      | 99.8%  |
-| ptr-net  | 5-50        | 200 | 0.9%       | 99.4%  |
-| ptr-net  | 5-50        | 500 | 0.0%       | 99.0%  |
+| ptr-net  | 50          |  50 | 66.1%      | 100.0% |
+| ptr-net  | 5-50        |   5 | 93.8%      | 99.8%  |
+| ptr-net  | 5-50        |  10 | 87.9%      | 99.9%  |
+| ptr-net  | 5-50        |  50 | 63.1%      | 100.0% |
+| ptr-net  | 5-50        | 200 | 10.1%      | 99.9%  |
+| ptr-net  | 5-50        | 500 | 0.1%       | 99.6%  |
 
 ## TSP
 Compare with Table 2 of the paper.
@@ -121,25 +120,26 @@ Compare with Table 2 of the paper.
 | n                 |   ptr-net |
 |-------------------|-----------|
 | 5                 |      2.12 |
-| 10                |      2.89 |
-| 50 (a1 trained)   |      7.77 |
+| 10                |      2.88 |
+| 50 (a1 trained)   |      6.7  |
 | 5 (5-20 trained)  |      2.18 |
-| 10 (5-20 trained) |      3.04 |
-| 20 (5-20 trained) |      4.25 |
-| 40 (5-20 trained) |      8.4  |
-| 50 (5-20 trained) |     11.15 |
+| 10 (5-20 trained) |      3.05 |
+| 20 (5-20 trained) |      4.23 |
+| 40 (5-20 trained) |      7.25 |
+| 50 (5-20 trained) |      9.14 |
 
 # Changes
 Here is the list of changes I did to the original paper description
 
-* The paper states that the decoding process for the convex hull task was unconstrained.
-  I added some conditions to the decoding process for convex hull, see the details
-  [here](https://github.com/gchaperon/replication/blob/125e9d9a2de3790ffb502cc6cd10b8c1578003ca/pointer-networks/ptrnets/model.py#L376).
-<!---
-* Optimizer: SGD to Adam and add learn rate scheduler. I obtained similar results with
-  eoth but Adam converged faster.
---->
+* Convex Hull decoding: The paper states that the decoding process for the
+  convex hull task was unconstrained.  I added some conditions to the decoding
+  process for convex hull, see the details
+  [here](https://github.com/gchaperon/pointer-networks/blob/master/ptrnets/model.py#L376).
 
+* Optimizer and Scheduler: Changed SGD to Adam, learn rate from 1.0 to 1e-3
+  (inline with what's recommended for Adam) and added a learn rate scheduler
+  (exponential decay). The optimizer largely improved and sped up convergence,
+  and the scheduler helped with reducing noise in the final steps of training.
 
 # Other implementations
 Some were useful, some weren't
